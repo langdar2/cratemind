@@ -2,14 +2,12 @@
 # Copy this file to config.yaml and update with your settings
 # Environment variables take priority over values in this file
 
-plex:
-  # Plex server URL (override with PLEX_URL env var)
-  url: "http://your-plex-server:32400"
-  # Plex authentication token (override with PLEX_TOKEN env var)
-  # See: https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/
-  token: ""
-  # Name of your music library section in Plex
-  music_library: "Music"
+# Gerbera DLNA database (direct SQLite access, same machine)
+gerbera:
+  db_path: "/home/user/gerbera.db"
+  playlist_output_dir: "/media/music/playlists"
+  favorites_file: "favorites.yaml"
+  min_play_count: 0    # 0 = all tracks; e.g. 3 = only tracks with >= 3 plays
 
 llm:
   # LLM provider: "anthropic", "openai", or "gemini"

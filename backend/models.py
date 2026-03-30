@@ -85,12 +85,13 @@ class Playlist(BaseModel):
 # =============================================================================
 
 
-class PlexConfig(BaseModel):
-    """Plex server connection settings."""
+class GerberaConfig(BaseModel):
+    """Gerbera DLNA connection settings."""
 
-    url: str
-    token: str
-    music_library: str = "Music"
+    db_path: str = ""           # Path to gerbera.db, e.g. "/home/user/gerbera.db"
+    playlist_output_dir: str = ""  # Gerbera-watched directory for M3U files
+    favorites_file: str = "favorites.yaml"
+    min_play_count: int = 0     # 0 = no filter; e.g. 3 = only tracks with >= 3 plays
 
 
 class LLMConfig(BaseModel):
@@ -126,7 +127,7 @@ class DefaultsConfig(BaseModel):
 class AppConfig(BaseModel):
     """Root configuration object."""
 
-    plex: PlexConfig
+    gerbera: GerberaConfig
     llm: LLMConfig
     defaults: DefaultsConfig = DefaultsConfig()
 

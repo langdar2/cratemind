@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-from backend.models import AppConfig, DefaultsConfig, LLMConfig, PlexConfig
+from backend.models import AppConfig, DefaultsConfig, GerberaConfig, LLMConfig
 
 # Load .env file (if it exists) - env vars take priority
 load_dotenv()
@@ -147,7 +147,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     yaml_config = deep_merge(yaml_config, user_config)
 
     # Extract nested config sections
-    plex_yaml = yaml_config.get("plex", {})
+    gerbera_yaml = yaml_config.get("gerbera", {})
     llm_yaml = yaml_config.get("llm", {})
     defaults_yaml = yaml_config.get("defaults", {})
 
@@ -189,12 +189,18 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     provider_defaults = MODEL_DEFAULTS.get(provider, MODEL_DEFAULTS["gemini"])
 
     # Build configuration
-    plex_config = PlexConfig(
-        url=get_env_or_yaml("PLEX_URL", plex_yaml.get("url"), ""),
-        token=get_env_or_yaml("PLEX_TOKEN", plex_yaml.get("token"), ""),
-        music_library=get_env_or_yaml(
-            "PLEX_MUSIC_LIBRARY", plex_yaml.get("music_library"), "Music"
+    min_play_count_raw = get_env_or_yaml(
+        "MIN_PLAY_COUNT", gerbera_yaml.get("min_play_count"), 0
+    )
+    gerbera_config = GerberaConfig(
+        db_path=get_env_or_yaml("GERBERA_DB_PATH", gerbera_yaml.get("db_path"), ""),
+        playlist_output_dir=get_env_or_yaml(
+            "PLAYLIST_OUTPUT_DIR", gerbera_yaml.get("playlist_output_dir"), ""
         ),
+        favorites_file=get_env_or_yaml(
+            "FAVORITES_FILE", gerbera_yaml.get("favorites_file"), "favorites.yaml"
+        ),
+        min_play_count=int(min_play_count_raw) if isinstance(min_play_count_raw, str) else min_play_count_raw,
     )
 
     # Get local provider settings
@@ -260,7 +266,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     )
 
     return AppConfig(
-        plex=plex_config,
+        gerbera=gerbera_config,
         llm=llm_config,
         defaults=defaults_config,
     )
@@ -296,15 +302,17 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
         _config = load_config()
 
     # Create updated config by merging updates
-    plex_updates = {}
+    gerbera_updates = {}
     llm_updates = {}
 
-    if "plex_url" in updates and updates["plex_url"]:
-        plex_updates["url"] = updates["plex_url"]
-    if "plex_token" in updates and updates["plex_token"]:
-        plex_updates["token"] = updates["plex_token"]
-    if "music_library" in updates and updates["music_library"]:
-        plex_updates["music_library"] = updates["music_library"]
+    if "db_path" in updates and updates["db_path"]:
+        gerbera_updates["db_path"] = updates["db_path"]
+    if "playlist_output_dir" in updates and updates["playlist_output_dir"]:
+        gerbera_updates["playlist_output_dir"] = updates["playlist_output_dir"]
+    if "favorites_file" in updates and updates["favorites_file"]:
+        gerbera_updates["favorites_file"] = updates["favorites_file"]
+    if "min_play_count" in updates and updates["min_play_count"] is not None:
+        gerbera_updates["min_play_count"] = updates["min_play_count"]
 
     if "llm_provider" in updates and updates["llm_provider"]:
         new_provider = updates["llm_provider"]
@@ -346,19 +354,19 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
         llm_updates["custom_context_window"] = updates["custom_context_window"]
 
     # Create new config with updates
-    new_plex = _config.plex.model_copy(update=plex_updates)
+    new_gerbera = _config.gerbera.model_copy(update=gerbera_updates)
     new_llm = _config.llm.model_copy(update=llm_updates)
 
     _config = AppConfig(
-        plex=new_plex,
+        gerbera=new_gerbera,
         llm=new_llm,
         defaults=_config.defaults,
     )
 
     # Persist to user config file
     user_updates: dict[str, Any] = {}
-    if plex_updates:
-        user_updates["plex"] = plex_updates
+    if gerbera_updates:
+        user_updates["gerbera"] = gerbera_updates
     if llm_updates:
         user_updates["llm"] = llm_updates
 
