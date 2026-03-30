@@ -1,14 +1,19 @@
 """Playlist generation with library validation."""
 
 import json
+import json as _json
 import logging
+import re as _re
 from collections.abc import Generator
 from datetime import datetime
+from datetime import date as _date
+from pathlib import Path
 
 from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
 from backend.plex_client import PlexQueryError, get_plex_client
 from backend import library_cache
+from backend.favorites import Favorites, is_favorite
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +150,46 @@ def _get_tracks_from_cache_or_plex(
         )
 
 
+def write_m3u(
+    tracks: list[dict],
+    playlist_title: str,
+    output_dir: str,
+    date_str: str | None = None,
+) -> str:
+    """Write an Extended M3U playlist file and return its path."""
+    if date_str is None:
+        date_str = _date.today().isoformat()
+    safe_title = _re.sub(r'[<>:"/\\|?*]', "_", playlist_title)
+    filename = f"{date_str}_{safe_title}.m3u"
+    output_path = Path(output_dir) / filename
+    lines = ["#EXTM3U"]
+    for track in tracks:
+        duration_sec = int(track.get("duration_ms", 0) / 1000)
+        artist = track.get("artist", "")
+        title = track.get("title", "")
+        file_path = track.get("file_path", "")
+        lines.append(f"#EXTINF:{duration_sec},{artist} - {title}")
+        lines.append(file_path)
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(output_path)
+
+
+def build_track_prompt_entry(track: dict, favs: Favorites) -> str:
+    """Format a track for the LLM prompt; append [FAVORITE] for preferred tracks."""
+    genres_raw = track.get("genres", "[]")
+    if isinstance(genres_raw, list):
+        genres = genres_raw
+    else:
+        genres = _json.loads(genres_raw)
+    genre_str = ", ".join(genres) if genres else "unknown"
+    fav_tag = " [FAVORITE]" if is_favorite(favs, track.get("artist", ""), track.get("album")) else ""
+    return (
+        f"{track.get('artist', '')} — {track.get('title', '')} "
+        f"({track.get('album', '')}, {track.get('year', '?')}, "
+        f"Genre: {genre_str}, Plays: {track.get('play_count', 0)}){fav_tag}"
+    )
+
+
 def generate_playlist_stream(
     prompt: str | None = None,
     seed_track: Track | None = None,
@@ -218,8 +263,17 @@ def generate_playlist_stream(
         # Step 3: Build track list
         yield emit("progress", {"step": "preparing", "message": f"Preparing {len(filtered_tracks)} tracks for AI..."})
 
+        # Load favorites for prompt boost (no-op if favorites.yaml missing)
+        try:
+            from backend.favorites import load_favorites
+            import os as _os
+            _favs_path = _os.path.join(_os.path.dirname(__file__), "..", "favorites.yaml")
+            _favs = load_favorites(_favs_path)
+        except Exception:
+            _favs = Favorites()
+
         track_list = "\n".join(
-            f"{i+1}. {t.artist} - {t.title} ({t.album}, {t.year or 'Unknown year'})"
+            f"{i+1}. {build_track_prompt_entry(t.model_dump(), _favs)}"
             for i, t in enumerate(filtered_tracks)
         )
 
