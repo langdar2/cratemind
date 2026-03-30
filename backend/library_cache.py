@@ -1,8 +1,7 @@
-"""Local SQLite cache for Plex library track metadata.
+"""Local SQLite cache for Gerbera DLNA library track metadata.
 
-This module provides fast local access to track data by caching Plex library
-metadata in a SQLite database. It eliminates the 2+ minute cold start time
-for large libraries by syncing once and loading from cache thereafter.
+This module provides fast local access to track data by caching Gerbera library
+metadata in a SQLite database.
 """
 
 import json
@@ -15,7 +14,9 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
+
+from backend.gerbera_client import GerberaTrack
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,135 @@ def _is_live_version(title: str, album: str) -> bool:
         if re.search(LIVE_KEYWORDS, text, re.IGNORECASE):
             return True
     return False
+
+
+# =============================================================================
+# Gerbera-specific: init_db, sync_tracks, get_tracks
+# =============================================================================
+
+IS_LIVE_PATTERN = re.compile(
+    r"\b(live|concert|in concert|bootleg|unplugged)\b", re.IGNORECASE
+)
+
+
+def init_db(db_path: str) -> sqlite3.Connection:
+    """Initialize a Gerbera cache database at the given path.
+
+    Creates the tracks table with Gerbera schema (gerbera_id, file_path,
+    play_count; no Plex-specific columns).
+
+    Args:
+        db_path: Filesystem path for the SQLite database file.
+
+    Returns:
+        Open sqlite3.Connection with row_factory set for dict-like access.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tracks (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            gerbera_id  INTEGER UNIQUE NOT NULL,
+            title       TEXT NOT NULL,
+            artist      TEXT NOT NULL,
+            album       TEXT NOT NULL,
+            genres      TEXT NOT NULL DEFAULT '[]',
+            year        INTEGER,
+            duration_ms INTEGER,
+            file_path   TEXT NOT NULL,
+            play_count  INTEGER DEFAULT 0,
+            is_live     BOOLEAN DEFAULT 0
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+def sync_tracks(conn: sqlite3.Connection, tracks: list[GerberaTrack]) -> None:
+    """Insert or update Gerbera tracks in the cache database.
+
+    Uses INSERT ... ON CONFLICT DO UPDATE (upsert) on gerbera_id.
+    is_live is auto-detected from title/album keywords.
+
+    Args:
+        conn: Open database connection (from init_db).
+        tracks: List of GerberaTrack dataclass instances to sync.
+    """
+    rows = []
+    for t in tracks:
+        is_live = bool(
+            IS_LIVE_PATTERN.search(t.title or "")
+            or IS_LIVE_PATTERN.search(t.album or "")
+        )
+        genres_json = json.dumps([t.genre] if t.genre else [])
+        rows.append((
+            t.gerbera_id, t.title, t.artist, t.album,
+            genres_json, t.year, t.duration_ms,
+            t.file_path, t.play_count, is_live,
+        ))
+    conn.executemany("""
+        INSERT INTO tracks
+            (gerbera_id, title, artist, album, genres, year,
+             duration_ms, file_path, play_count, is_live)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(gerbera_id) DO UPDATE SET
+            title=excluded.title, artist=excluded.artist,
+            album=excluded.album, genres=excluded.genres,
+            year=excluded.year, duration_ms=excluded.duration_ms,
+            file_path=excluded.file_path,
+            play_count=excluded.play_count, is_live=excluded.is_live
+    """, rows)
+    conn.commit()
+
+
+def get_tracks(
+    conn: sqlite3.Connection,
+    genres: Optional[list[str]] = None,
+    min_year: Optional[int] = None,
+    max_year: Optional[int] = None,
+    min_play_count: int = 0,
+    exclude_live: bool = False,
+) -> list[dict]:
+    """Query tracks from the Gerbera cache with optional filters.
+
+    Args:
+        conn: Open database connection (from init_db).
+        genres: Only return tracks whose genres list contains one of these.
+        min_year: Only return tracks from this year or later.
+        max_year: Only return tracks from this year or earlier.
+        min_play_count: Only return tracks with at least this many plays.
+        exclude_live: If True, skip tracks detected as live recordings.
+
+    Returns:
+        List of track dicts (all columns from the tracks table).
+    """
+    query = "SELECT * FROM tracks WHERE 1=1"
+    params: list = []
+
+    if genres:
+        genre_clauses = " OR ".join(["genres LIKE ?"] * len(genres))
+        query += f" AND ({genre_clauses})"
+        params.extend([f'%"{g}"%' for g in genres])
+
+    if min_year:
+        query += " AND year >= ?"
+        params.append(min_year)
+    if max_year:
+        query += " AND year <= ?"
+        params.append(max_year)
+    if min_play_count > 0:
+        query += " AND play_count >= ?"
+        params.append(min_play_count)
+    if exclude_live:
+        query += " AND is_live = 0"
+
+    cursor = conn.execute(query, params)
+    return [dict(row) for row in cursor.fetchall()]
+
+
+# =============================================================================
+# Legacy Plex-based connection helpers (kept for other app functions below)
+# =============================================================================
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -404,188 +534,8 @@ def check_server_changed(current_server_id: str) -> bool:
     return cached_server_id != current_server_id
 
 
-def sync_library(
-    plex_client: Any,
-    on_progress: Callable[[int, int], None] | None = None,
-) -> dict[str, Any]:
-    """Sync tracks from Plex to local cache.
-
-    This is a blocking synchronous operation. For async usage, wrap in
-    asyncio.to_thread() or run in a thread pool.
-
-    Args:
-        plex_client: PlexClient instance with active connection
-        on_progress: Optional callback(current, total) for progress updates
-
-    Returns:
-        Dict with success, track_count, duration_ms, error
-    """
-    global _sync_state
-
-    # Use lock to prevent race condition between check and set
-    with _sync_lock:
-        if _sync_state["is_syncing"]:
-            return {"success": False, "error": "Sync already in progress"}
-
-        _sync_state = {
-            "is_syncing": True,
-            "phase": "fetching_albums",
-            "current": 0,
-            "total": 0,
-            "error": None,
-        }
-
-    start_time = time.time()
-    conn = None
-
-    try:
-        # Get server ID for cache validation
-        server_id = plex_client.get_machine_identifier()
-        if not server_id:
-            raise ValueError("Could not get Plex server identifier")
-
-        # Check if server changed - clear cache if so
-        if check_server_changed(server_id):
-            logger.info("Plex server changed, clearing cache")
-            clear_cache()
-
-        conn = ensure_db_initialized()
-
-        # Clear existing tracks and reset sync state to avoid stale "cache available"
-        # signal if sync fails partway through
-        conn.execute("DELETE FROM tracks")
-        conn.execute("UPDATE sync_state SET track_count = 0 WHERE id = 1")
-        conn.commit()
-
-        # Phase 1: Fetch albums for genre/year mapping
-        logger.info("Fetching album metadata from Plex...")
-        album_metadata = plex_client.get_all_albums_metadata()
-        logger.info("Got metadata for %d albums", len(album_metadata))
-
-        # Phase 2: Fetch all tracks from Plex
-        with _sync_lock:
-            _sync_state["phase"] = "fetching"
-        logger.info("Fetching all tracks from Plex (this may take 30-60s)...")
-        all_tracks = plex_client.get_all_raw_tracks()
-        total = len(all_tracks)
-        logger.info("Got %d tracks from Plex", total)
-
-        with _sync_lock:
-            _sync_state["total"] = total
-            _sync_state["phase"] = "processing"
-
-        # Phase 3: Process tracks in batches with album metadata lookup
-        synced_count = 0
-        batch_data = []
-
-        for i, track in enumerate(all_tracks):
-            # Extract track data
-            title = track.title
-            album = getattr(track, "parentTitle", "") or ""
-            artist = getattr(track, "grandparentTitle", "") or "Unknown Artist"
-
-            # Look up genres and year from album metadata using parentRatingKey
-            parent_key = str(getattr(track, "parentRatingKey", ""))
-            album_data = album_metadata.get(parent_key, {})
-            genres = album_data.get("genres", [])
-            year = album_data.get("year")
-
-            # Extract play history data
-            view_count = getattr(track, "viewCount", 0) or 0
-            last_viewed_at_raw = getattr(track, "lastViewedAt", None)
-            last_viewed_at = last_viewed_at_raw.isoformat() if last_viewed_at_raw else None
-
-            batch_data.append((
-                str(track.ratingKey),
-                title,
-                artist,
-                album,
-                track.duration or 0,
-                year,
-                json.dumps(genres),  # Store genres as JSON array
-                getattr(track, "userRating", None),
-                _is_live_version(title, album),
-                parent_key,
-                view_count,
-                last_viewed_at,
-            ))
-
-            # Insert and update progress every SYNC_BATCH_SIZE tracks
-            if len(batch_data) >= SYNC_BATCH_SIZE:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO tracks "
-                    "(rating_key, title, artist, album, duration_ms, year, genres, "
-                    "user_rating, is_live, parent_rating_key, view_count, last_viewed_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    batch_data,
-                )
-                synced_count += len(batch_data)
-                batch_data = []
-
-                # Update progress (single field, atomic under CPython GIL)
-                with _sync_lock:
-                    _sync_state["current"] = synced_count
-                if on_progress:
-                    on_progress(synced_count, total)
-
-                logger.info("Synced %d/%d tracks", synced_count, total)
-
-                # Commit every batch to allow concurrent reads (WAL mode)
-                conn.commit()
-
-        # Insert remaining tracks
-        if batch_data:
-            conn.executemany(
-                "INSERT OR REPLACE INTO tracks "
-                "(rating_key, title, artist, album, duration_ms, year, genres, "
-                "user_rating, is_live, parent_rating_key, view_count, last_viewed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                batch_data,
-            )
-            synced_count += len(batch_data)
-            with _sync_lock:
-                _sync_state["current"] = synced_count
-
-        # Final commit
-        conn.commit()
-
-        # Update sync state
-        duration_ms = int((time.time() - start_time) * 1000)
-        synced_at = datetime.now(timezone.utc).isoformat()
-
-        conn.execute(
-            "UPDATE sync_state SET plex_server_id = ?, last_sync_at = ?, "
-            "track_count = ?, sync_duration_ms = ? WHERE id = 1",
-            (server_id, synced_at, synced_count, duration_ms),
-        )
-        conn.commit()
-
-        logger.info("Sync complete: %d tracks in %dms", synced_count, duration_ms)
-
-        # Clear migration flag — new columns are now populated
-        global _migration_applied
-        _migration_applied = False
-
-        return {
-            "success": True,
-            "track_count": synced_count,
-            "duration_ms": duration_ms,
-        }
-
-    except Exception as e:
-        logger.exception("Sync failed: %s", e)
-        with _sync_lock:
-            _sync_state["error"] = str(e)
-        return {"success": False, "error": str(e)}
-
-    finally:
-        with _sync_lock:
-            _sync_state["is_syncing"] = False
-            _sync_state["phase"] = None
-            _sync_state["current"] = 0
-            _sync_state["total"] = 0
-        if conn:
-            conn.close()
+# sync_library(plex_client, ...) has been removed — replaced by sync_tracks()
+# for Gerbera DLNA. plex_client.py will be deleted in a later task.
 
 
 def get_sync_progress() -> dict[str, Any]:
