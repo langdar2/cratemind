@@ -37,48 +37,50 @@ def read_tracks(db_path: str) -> list[GerberaTrack]:
     """Read all audio tracks from Gerbera's SQLite database."""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
-    cursor = conn.execute("""
-        SELECT
-            o.id,
-            o.dc_title,
-            o.location,
-            r.duration,
-            COALESCE(ps.play_count, 0) AS play_count,
-            MAX(CASE WHEN m.property_name = 'upnp:artist' THEN m.property_value END) AS artist,
-            MAX(CASE WHEN m.property_name = 'upnp:album'  THEN m.property_value END) AS album,
-            MAX(CASE WHEN m.property_name = 'upnp:genre'  THEN m.property_value END) AS genre,
-            MAX(CASE WHEN m.property_name = 'dc:date'     THEN m.property_value END) AS year_str
-        FROM mt_cds_object o
-        LEFT JOIN mt_metadata       m  ON m.item_id  = o.id
-        LEFT JOIN grb_cds_resource  r  ON r.item_id  = o.id AND r.res_id = 0
-        LEFT JOIN (
-            SELECT item_id, SUM(playCount) AS play_count
-            FROM grb_playstatus
-            GROUP BY item_id
-        ) ps ON ps.item_id = o.id
-        WHERE o.upnp_class = 'object.item.audioItem.musicTrack'
-          AND o.ref_id IS NULL
-        GROUP BY o.id
-    """)
+    try:
+        cursor = conn.execute("""
+            SELECT
+                o.id,
+                o.dc_title,
+                o.location,
+                r.duration,
+                COALESCE(ps.play_count, 0) AS play_count,
+                MAX(CASE WHEN m.property_name = 'upnp:artist' THEN m.property_value END) AS artist,
+                MAX(CASE WHEN m.property_name = 'upnp:album'  THEN m.property_value END) AS album,
+                MAX(CASE WHEN m.property_name = 'upnp:genre'  THEN m.property_value END) AS genre,
+                MAX(CASE WHEN m.property_name = 'dc:date'     THEN m.property_value END) AS year_str
+            FROM mt_cds_object o
+            LEFT JOIN mt_metadata       m  ON m.item_id  = o.id
+            LEFT JOIN grb_cds_resource  r  ON r.item_id  = o.id AND r.res_id = 0
+            LEFT JOIN (
+                SELECT item_id, SUM(playCount) AS play_count
+                FROM grb_playstatus
+                GROUP BY item_id
+            ) ps ON ps.item_id = o.id
+            WHERE o.upnp_class = 'object.item.audioItem.musicTrack'
+              AND o.ref_id IS NULL
+            GROUP BY o.id
+        """)
 
-    tracks = []
-    for row in cursor.fetchall():
-        year_str = row["year_str"] or "0"
-        try:
-            year = int(str(year_str)[:4])
-        except (ValueError, TypeError):
-            year = 0
+        tracks = []
+        for row in cursor.fetchall():
+            year_str = row["year_str"] or "0"
+            try:
+                year = int(str(year_str)[:4])
+            except (ValueError, TypeError):
+                year = 0
 
-        tracks.append(GerberaTrack(
-            gerbera_id=row["id"],
-            title=row["dc_title"] or "",
-            artist=row["artist"] or "",
-            album=row["album"] or "",
-            genre=row["genre"] or "",
-            year=year,
-            duration_ms=_parse_duration_ms(row["duration"] or ""),
-            file_path=row["location"] or "",
-            play_count=int(row["play_count"]),
-        ))
-    conn.close()
-    return tracks
+            tracks.append(GerberaTrack(
+                gerbera_id=row["id"],
+                title=row["dc_title"] or "",
+                artist=row["artist"] or "",
+                album=row["album"] or "",
+                genre=row["genre"] or "",
+                year=year,
+                duration_ms=_parse_duration_ms(row["duration"] or ""),
+                file_path=row["location"] or "",
+                play_count=int(row["play_count"]),
+            ))
+        return tracks
+    finally:
+        conn.close()
