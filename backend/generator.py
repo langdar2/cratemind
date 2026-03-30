@@ -102,6 +102,7 @@ def _cached_track_to_model(cached: dict) -> Track:
         year=cached.get("year"),
         genres=cached.get("genres") or [],
         art_url=f"/api/art/{cached['rating_key']}",
+        play_count=cached.get("play_count") or 0,
     )
 
 

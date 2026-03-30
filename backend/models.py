@@ -28,6 +28,7 @@ class Track(BaseModel):
     year: int | None = None
     genres: list[str] = []
     art_url: str | None = None
+    play_count: int = 0
 
     @property
     def duration_formatted(self) -> str:
