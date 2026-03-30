@@ -4,9 +4,9 @@
 
 # Gerbera DLNA database (direct SQLite access, same machine)
 gerbera:
-  db_path: "/home/user/gerbera.db"
-  playlist_output_dir: "/media/music/playlists"
-  favorites_file: "favorites.yaml"
+  db_path: "/home/user/gerbera.db"  # env: GERBERA_DB_PATH
+  playlist_output_dir: "/media/music/playlists"  # env: GERBERA_PLAYLIST_OUTPUT_DIR
+  favorites_file: "favorites.yaml"  # env: GERBERA_FAVORITES_FILE
   min_play_count: 0    # 0 = all tracks; e.g. 3 = only tracks with >= 3 plays
 
 llm:

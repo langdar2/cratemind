@@ -195,10 +195,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     gerbera_config = GerberaConfig(
         db_path=get_env_or_yaml("GERBERA_DB_PATH", gerbera_yaml.get("db_path"), ""),
         playlist_output_dir=get_env_or_yaml(
-            "PLAYLIST_OUTPUT_DIR", gerbera_yaml.get("playlist_output_dir"), ""
+            "GERBERA_PLAYLIST_OUTPUT_DIR", gerbera_yaml.get("playlist_output_dir"), ""
         ),
         favorites_file=get_env_or_yaml(
-            "FAVORITES_FILE", gerbera_yaml.get("favorites_file"), "favorites.yaml"
+            "GERBERA_FAVORITES_FILE", gerbera_yaml.get("favorites_file"), "favorites.yaml"
         ),
         min_play_count=int(min_play_count_raw) if isinstance(min_play_count_raw, str) else min_play_count_raw,
     )

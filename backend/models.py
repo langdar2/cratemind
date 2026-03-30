@@ -86,7 +86,7 @@ class Playlist(BaseModel):
 
 
 class GerberaConfig(BaseModel):
-    """Gerbera DLNA connection settings."""
+    """Gerbera media server settings (direct SQLite access)."""
 
     db_path: str = ""           # Path to gerbera.db, e.g. "/home/user/gerbera.db"
     playlist_output_dir: str = ""  # Gerbera-watched directory for M3U files
