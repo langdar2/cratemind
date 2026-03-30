@@ -24,10 +24,6 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).parent.parent / "data"
 DB_PATH = DATA_DIR / "library_cache.db"
 
-# Patterns for detecting live recordings (same as plex_client.py)
-DATE_PATTERN = r"\d{4}[-/]\d{2}[-/]\d{2}"
-LIVE_KEYWORDS = r"\b(?:live|concert|sbd|bootleg)\b"
-
 # Batch size for sync operations (smaller = more frequent progress updates)
 SYNC_BATCH_SIZE = 500
 
@@ -46,16 +42,6 @@ _sync_lock = threading.Lock()
 # Track if schema has been initialized
 _schema_initialized = False
 _schema_lock = threading.Lock()
-
-
-def _is_live_version(title: str, album: str) -> bool:
-    """Check if track appears to be a live recording based on title/album."""
-    for text in [title, album]:
-        if re.search(DATE_PATTERN, text):
-            return True
-        if re.search(LIVE_KEYWORDS, text, re.IGNORECASE):
-            return True
-    return False
 
 
 # =============================================================================
@@ -166,10 +152,10 @@ def get_tracks(
         query += f" AND ({genre_clauses})"
         params.extend([f'%"{g}"%' for g in genres])
 
-    if min_year:
+    if min_year is not None:
         query += " AND year >= ?"
         params.append(min_year)
-    if max_year:
+    if max_year is not None:
         query += " AND year <= ?"
         params.append(max_year)
     if min_play_count > 0:
