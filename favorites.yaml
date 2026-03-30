@@ -1,0 +1,12 @@
+# favorites.yaml — Lieblings-Künstler und Alben
+# Tracks von diesen Künstlern/Alben werden vom LLM bevorzugt ausgewählt.
+
+artists:
+  - "Miles Davis"
+  - "Nick Cave & The Bad Seeds"
+
+albums:
+  - artist: "Tom Waits"
+    album: "Rain Dogs"
+  - artist: "PJ Harvey"
+    album: "Stories from the City, Stories from the Sea"
