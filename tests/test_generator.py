@@ -26,6 +26,14 @@ class TestPlaylistGeneration:
         from backend.generator import generate_playlist_stream
         from backend.llm_client import LLMResponse
 
+        # Convert Track fixtures to cache-dict format expected by _cached_track_to_model
+        cached_tracks = [
+            {"rating_key": t.rating_key, "title": t.title, "artist": t.artist,
+             "album": t.album, "duration_ms": t.duration_ms, "year": t.year,
+             "genres": t.genres, "play_count": 0}
+            for t in mock_plex_tracks[:5]
+        ]
+
         mock_response = LLMResponse(
             content=json.dumps([
                 {"artist": "Radiohead", "album": "The Bends", "title": "Fake Plastic Trees"},
@@ -49,12 +57,8 @@ class TestPlaylistGeneration:
             ]
             mock_llm.return_value = mock_client
 
-            with patch("backend.generator.get_plex_client") as mock_plex:
-                mock_plex_client = MagicMock()
-                mock_plex_client.get_tracks_by_filters.return_value = mock_plex_tracks[:5]
-                mock_plex.return_value = mock_plex_client
-
-                with patch("backend.generator.library_cache.has_cached_tracks", return_value=False):
+            with patch("backend.generator.library_cache.has_cached_tracks", return_value=True):
+                with patch("backend.generator.library_cache.get_tracks_by_filters", return_value=cached_tracks):
                     with patch("backend.generator.library_cache.save_result", return_value="abc123"):
                         events = _parse_sse_events(generate_playlist_stream(
                             prompt="90s alternative",
@@ -81,12 +85,8 @@ class TestPlaylistGeneration:
         with patch("backend.generator.get_llm_client") as mock_llm:
             mock_llm.return_value = MagicMock()
 
-            with patch("backend.generator.get_plex_client") as mock_plex:
-                mock_plex_client = MagicMock()
-                mock_plex_client.get_tracks_by_filters.return_value = []
-                mock_plex.return_value = mock_plex_client
-
-                with patch("backend.generator.library_cache.has_cached_tracks", return_value=False):
+            with patch("backend.generator.library_cache.has_cached_tracks", return_value=True):
+                with patch("backend.generator.library_cache.get_tracks_by_filters", return_value=[]):
                     events = _parse_sse_events(generate_playlist_stream(
                         prompt="nonexistent genre",
                         genres=["Nonexistent"],
@@ -103,6 +103,14 @@ class TestPlaylistGeneration:
         """Should fuzzy match LLM responses to library tracks."""
         from backend.generator import generate_playlist_stream
         from backend.llm_client import LLMResponse
+
+        # Convert Track fixtures to cache-dict format expected by _cached_track_to_model
+        cached_tracks = [
+            {"rating_key": t.rating_key, "title": t.title, "artist": t.artist,
+             "album": t.album, "duration_ms": t.duration_ms, "year": t.year,
+             "genres": t.genres, "play_count": 0}
+            for t in mock_plex_tracks[:5]
+        ]
 
         mock_response = LLMResponse(
             content=json.dumps([
@@ -126,12 +134,8 @@ class TestPlaylistGeneration:
             ]
             mock_llm.return_value = mock_client
 
-            with patch("backend.generator.get_plex_client") as mock_plex:
-                mock_plex_client = MagicMock()
-                mock_plex_client.get_tracks_by_filters.return_value = mock_plex_tracks[:5]
-                mock_plex.return_value = mock_plex_client
-
-                with patch("backend.generator.library_cache.has_cached_tracks", return_value=False):
+            with patch("backend.generator.library_cache.has_cached_tracks", return_value=True):
+                with patch("backend.generator.library_cache.get_tracks_by_filters", return_value=cached_tracks):
                     with patch("backend.generator.library_cache.save_result", return_value="abc123"):
                         events = _parse_sse_events(generate_playlist_stream(
                             prompt="radiohead",
@@ -151,7 +155,7 @@ class TestTrackMatching:
 
     def test_simplify_string_removes_punctuation(self):
         """Should remove punctuation from strings."""
-        from backend.plex_client import simplify_string
+        from backend.generator import simplify_string
 
         assert simplify_string("Don't Stop") == "dont stop"
         assert simplify_string("Rock & Roll") == "rock  roll"
@@ -159,14 +163,14 @@ class TestTrackMatching:
 
     def test_simplify_string_normalizes_unicode(self):
         """Should normalize unicode characters."""
-        from backend.plex_client import simplify_string
+        from backend.generator import simplify_string
 
         assert simplify_string("Café") == "cafe"
         assert simplify_string("Motörhead") == "motorhead"
 
     def test_normalize_artist_handles_and_variations(self):
         """Should handle 'and' vs '&' variations."""
-        from backend.plex_client import normalize_artist
+        from backend.generator import normalize_artist
 
         variations = normalize_artist("Simon & Garfunkel")
         assert "Simon & Garfunkel" in variations
@@ -374,7 +378,7 @@ class TestLiveVersionFiltering:
 
     def test_is_live_version_detects_live_keyword(self):
         """Should detect 'live' in track or album title."""
-        from backend.plex_client import is_live_version
+        from backend.generator import is_live_version
 
         class MockTrack:
             def __init__(self, title, album_title):
@@ -390,7 +394,7 @@ class TestLiveVersionFiltering:
 
     def test_is_live_version_detects_concert_keyword(self):
         """Should detect 'concert' in track or album title."""
-        from backend.plex_client import is_live_version
+        from backend.generator import is_live_version
 
         class MockTrack:
             def __init__(self, title, album_title):
@@ -404,7 +408,7 @@ class TestLiveVersionFiltering:
 
     def test_is_live_version_detects_date_patterns(self):
         """Should detect date patterns in album titles."""
-        from backend.plex_client import is_live_version
+        from backend.generator import is_live_version
 
         class MockTrack:
             def __init__(self, title, album_title):

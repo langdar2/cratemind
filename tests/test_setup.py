@@ -12,13 +12,12 @@ from backend.models import DefaultsConfig
 def client():
     """Create test client with mocked dependencies.
 
-    Patches lifespan-triggered side effects (config loading, Plex/LLM init,
+    Patches lifespan-triggered side effects (config loading, LLM init,
     library cache DB creation) so tests don't depend on real environment.
     """
     from backend.main import app
     with (
         patch("backend.main.get_config", return_value=create_mock_config()),
-        patch("backend.main.init_plex_client"),
         patch("backend.main.init_llm_client"),
         patch("backend.main.library_cache"),
     ):
@@ -28,21 +27,19 @@ def client():
 def create_mock_config(**overrides):
     """Create a properly structured mock config for setup tests."""
     defaults = {
-        "plex_url": "http://test:32400",
-        "plex_token": "token",
-        "music_library": "Music",
         "llm_provider": "anthropic",
         "llm_api_key": "key",
         "model_analysis": "claude-sonnet-4-5",
         "model_generation": "claude-haiku-4-5",
         "ollama_url": "http://localhost:11434",
         "custom_url": "",
+        "gerbera_db_path": "",
+        "gerbera_favorites_file": "favorites.yaml",
     }
     defaults.update(overrides)
     mock = MagicMock()
-    mock.plex.url = defaults["plex_url"]
-    mock.plex.token = defaults["plex_token"]
-    mock.plex.music_library = defaults["music_library"]
+    mock.gerbera.db_path = defaults["gerbera_db_path"]
+    mock.gerbera.favorites_file = defaults["gerbera_favorites_file"]
     mock.llm.provider = defaults["llm_provider"]
     mock.llm.api_key = defaults["llm_api_key"]
     mock.llm.model_analysis = defaults["model_analysis"]
@@ -58,14 +55,8 @@ class TestSetupStatus:
 
     def test_status_returns_all_fields(self, client):
         """Should return full checklist state."""
-        mock_plex = MagicMock()
-        mock_plex.is_connected.return_value = True
-        mock_plex.get_error.return_value = None
-        mock_plex.get_music_libraries.return_value = ["Music"]
-
         with (
             patch("backend.main.get_config", return_value=create_mock_config()),
-            patch("backend.main.get_plex_client", return_value=mock_plex),
             patch("backend.main.library_cache") as mock_cache,
             patch("backend.main.load_user_yaml_config", return_value={}),
         ):
@@ -87,20 +78,16 @@ class TestSetupStatus:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["plex_connected"] is True
+        assert data["plex_connected"] is False  # Always False in Gerbera mode
         assert data["llm_configured"] is True
         assert data["library_synced"] is True
         assert data["track_count"] == 1000
         assert data["setup_complete"] is False
-        assert data["music_libraries"] == ["Music"]
 
     def test_status_unconfigured(self, client):
         """Should show all steps incomplete when nothing is configured."""
         with (
-            patch("backend.main.get_config", return_value=create_mock_config(
-                plex_url="", plex_token="", llm_api_key=""
-            )),
-            patch("backend.main.get_plex_client", return_value=None),
+            patch("backend.main.get_config", return_value=create_mock_config(llm_api_key="")),
             patch("backend.main.library_cache") as mock_cache,
             patch("backend.main.load_user_yaml_config", return_value={}),
         ):
@@ -130,7 +117,6 @@ class TestSetupStatus:
         """Should reflect setup_complete from config.user.yaml."""
         with (
             patch("backend.main.get_config", return_value=create_mock_config()),
-            patch("backend.main.get_plex_client", return_value=None),
             patch("backend.main.library_cache") as mock_cache,
             patch("backend.main.load_user_yaml_config", return_value={"setup": {"complete": True}}),
         ):
@@ -148,53 +134,6 @@ class TestSetupStatus:
 
         assert response.status_code == 200
         assert response.json()["setup_complete"] is True
-
-
-class TestSetupValidatePlex:
-    """Tests for POST /api/setup/validate-plex."""
-
-    def test_validate_plex_success(self, client):
-        """Should return success when Plex connects."""
-        mock_temp_client = MagicMock()
-        mock_temp_client.is_connected.return_value = True
-        mock_temp_client.get_music_libraries.return_value = ["Music", "Audiobooks"]
-        mock_temp_client._server = MagicMock()
-        mock_temp_client._server.friendlyName = "My Plex Server"
-
-        with (
-            patch("backend.main.PlexClientInstance", return_value=mock_temp_client),
-            patch("backend.main.update_config_values"),
-            patch("backend.main.init_plex_client"),
-        ):
-            response = client.post("/api/setup/validate-plex", json={
-                "plex_url": "http://plex:32400",
-                "plex_token": "abc123",
-                "music_library": "Music",
-            })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is True
-        assert data["server_name"] == "My Plex Server"
-        assert data["music_libraries"] == ["Music", "Audiobooks"]
-
-    def test_validate_plex_failure(self, client):
-        """Should return error when Plex connection fails."""
-        mock_temp_client = MagicMock()
-        mock_temp_client.is_connected.return_value = False
-        mock_temp_client.get_error.return_value = "Invalid Plex token - unauthorized"
-
-        with patch("backend.main.PlexClientInstance", return_value=mock_temp_client):
-            response = client.post("/api/setup/validate-plex", json={
-                "plex_url": "http://plex:32400",
-                "plex_token": "bad-token",
-                "music_library": "Music",
-            })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["success"] is False
-        assert "unauthorized" in data["error"].lower()
 
 
 class TestSetupValidateAI:
