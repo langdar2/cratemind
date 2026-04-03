@@ -184,3 +184,73 @@ def test_init_db_creates_favorites_table():
     finally:
         conn.close()
         os.unlink(db_path)
+
+
+def make_db_with_favorites():
+    """Create a temp DB with both tracks and favorites tables."""
+    import tempfile, os
+    f = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    db_path = f.name
+    f.close()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            gerbera_id INTEGER UNIQUE NOT NULL,
+            title TEXT NOT NULL, artist TEXT, album TEXT,
+            genres TEXT, year INTEGER, duration_ms INTEGER,
+            file_path TEXT, play_count INTEGER DEFAULT 0,
+            is_live BOOLEAN DEFAULT 0,
+            first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS sync_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_sync_at TIMESTAMP,
+            track_count INTEGER DEFAULT 0
+        );
+        INSERT OR IGNORE INTO sync_state (id) VALUES (1);
+        CREATE TABLE IF NOT EXISTS favorites (
+            type TEXT NOT NULL, artist TEXT NOT NULL,
+            album TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(type, artist, album)
+        );
+    """)
+    conn.commit()
+    return conn, db_path
+
+
+def test_toggle_favorite_insert_then_remove():
+    from backend.library_cache import toggle_favorite
+    conn, db_path = make_db_with_favorites()
+    try:
+        # First toggle: inserts → returns True
+        result = toggle_favorite("artist", "Radiohead", conn=conn)
+        assert result is True
+        row = conn.execute("SELECT * FROM favorites WHERE artist='Radiohead'").fetchone()
+        assert row is not None
+
+        # Second toggle: removes → returns False
+        result = toggle_favorite("artist", "Radiohead", conn=conn)
+        assert result is False
+        row = conn.execute("SELECT * FROM favorites WHERE artist='Radiohead'").fetchone()
+        assert row is None
+    finally:
+        conn.close()
+        os.unlink(db_path)
+
+
+def test_toggle_favorite_album():
+    from backend.library_cache import toggle_favorite
+    conn, db_path = make_db_with_favorites()
+    try:
+        result = toggle_favorite("album", "Radiohead", album="OK Computer", conn=conn)
+        assert result is True
+        row = conn.execute(
+            "SELECT * FROM favorites WHERE artist='Radiohead' AND album='OK Computer'"
+        ).fetchone()
+        assert row is not None
+    finally:
+        conn.close()
+        os.unlink(db_path)

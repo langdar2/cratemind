@@ -865,6 +865,47 @@ def get_cached_genre_decade_stats() -> dict[str, list[dict[str, Any]]]:
         conn.close()
 
 
+def toggle_favorite(
+    fav_type: str,
+    artist: str,
+    album: str = "",
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """Toggle a favorite on/off. Returns True if now a favorite, False if removed.
+
+    Args:
+        fav_type: 'artist' or 'album'
+        artist: Artist name (stored as-is, matched case-insensitively elsewhere)
+        album: Album name; empty string for artist-level favorites
+        conn: Optional connection (used in tests); opens one if not provided
+    """
+    close_after = conn is None
+    if conn is None:
+        conn = ensure_db_initialized()
+    try:
+        existing = conn.execute(
+            "SELECT 1 FROM favorites WHERE type=? AND artist=? AND album=?",
+            (fav_type, artist, album),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "DELETE FROM favorites WHERE type=? AND artist=? AND album=?",
+                (fav_type, artist, album),
+            )
+            conn.commit()
+            return False
+        else:
+            conn.execute(
+                "INSERT INTO favorites (type, artist, album) VALUES (?, ?, ?)",
+                (fav_type, artist, album),
+            )
+            conn.commit()
+            return True
+    finally:
+        if close_after:
+            conn.close()
+
+
 def get_album_familiarity(
     parent_rating_keys: list[str] | None = None,
 ) -> dict[str, dict]:
