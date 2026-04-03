@@ -12,7 +12,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -934,8 +934,7 @@ def get_artists_with_stats(
             GROUP BY t.artist
             ORDER BY track_count DESC
         """).fetchall()
-        from datetime import timedelta
-        cutoff_dt = datetime.utcnow() - timedelta(days=days_new)
+        cutoff_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_new)
         result = []
         for row in rows:
             first_seen = row["first_seen"]
@@ -987,8 +986,7 @@ def get_albums_with_stats(
             GROUP BY t.artist, t.album
             ORDER BY track_count DESC
         """).fetchall()
-        from datetime import timedelta
-        cutoff_dt = datetime.utcnow() - timedelta(days=days_new)
+        cutoff_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_new)
         result = []
         for row in rows:
             first_seen = row["first_seen"]
