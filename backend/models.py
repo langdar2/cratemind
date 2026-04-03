@@ -1,4 +1,4 @@
-"""Pydantic models for MediaSage API contracts and internal data structures."""
+"""Pydantic models for CrateMind API contracts and internal data structures."""
 
 from typing import Literal
 
@@ -425,6 +425,8 @@ class ConfigResponse(BaseModel):
     custom_context_window: int = 32768
     is_local_provider: bool = False
     provider_from_env: bool = False  # True if LLM_PROVIDER env var is overriding UI
+    gerbera_db_path: str = ""
+    gerbera_playlist_output_dir: str = ""
 
 
 class UpdateConfigRequest(BaseModel):
@@ -433,6 +435,8 @@ class UpdateConfigRequest(BaseModel):
     plex_url: str | None = None
     plex_token: str | None = None
     music_library: str | None = None
+    gerbera_db_path: str | None = None
+    gerbera_playlist_output_dir: str | None = None
     llm_provider: str | None = None
     llm_api_key: str | None = None
     model_analysis: str | None = None
@@ -442,6 +446,13 @@ class UpdateConfigRequest(BaseModel):
     ollama_context_window: int | None = None
     custom_url: str | None = None
     custom_context_window: int | None = None
+
+
+class FavoritesPlaylistRequest(BaseModel):
+    """Request to generate a favorites-based playlist."""
+
+    track_count: int = 30
+    max_tracks_to_ai: int = 500
 
 
 class HealthResponse(BaseModel):
@@ -858,3 +869,37 @@ class SetupCompleteResponse(BaseModel):
     """Response from marking setup as complete."""
 
     success: bool
+
+
+# =============================================================================
+# Library / Favorites
+# =============================================================================
+
+
+class ArtistStat(BaseModel):
+    artist: str
+    track_count: int
+    is_new: bool
+    is_favorite: bool
+
+
+class AlbumStat(BaseModel):
+    artist: str
+    album: str
+    track_count: int
+    is_new: bool
+    is_favorite: bool
+
+
+class LibraryArtistsResponse(BaseModel):
+    artists: list[ArtistStat]
+
+
+class LibraryAlbumsResponse(BaseModel):
+    albums: list[AlbumStat]
+
+
+class ToggleFavoriteRequest(BaseModel):
+    type: Literal["artist", "album"]
+    artist: str
+    album: str = ""

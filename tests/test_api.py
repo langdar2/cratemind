@@ -30,9 +30,9 @@ def create_mock_config(
 ):
     """Create a properly structured mock config."""
     mock = MagicMock()
-    mock.plex.url = plex_url
-    mock.plex.token = plex_token
-    mock.plex.music_library = music_library
+    mock.gerbera.db_path = ""
+    mock.gerbera.playlist_output_dir = "/tmp"
+    mock.gerbera.favorites_file = "favorites.yaml"
     mock.llm.provider = llm_provider
     mock.llm.api_key = llm_api_key
     mock.llm.model_analysis = model_analysis
@@ -50,44 +50,38 @@ class TestHealthEndpoint:
     def test_health_check_returns_status(self, client):
         """Should return health status."""
         with patch("backend.main.get_config") as mock_config:
-            with patch("backend.main.get_plex_client") as mock_plex:
-                mock_config.return_value = create_mock_config()
-                mock_plex.return_value = MagicMock(is_connected=MagicMock(return_value=True))
+            mock_config.return_value = create_mock_config()
 
-                response = client.get("/api/health")
+            response = client.get("/api/health")
 
-                assert response.status_code == 200
-                data = response.json()
-                assert "status" in data
-                assert data["status"] == "healthy"
+            assert response.status_code == 200
+            data = response.json()
+            assert "status" in data
+            assert data["status"] == "healthy"
 
     def test_health_check_shows_plex_status(self, client):
-        """Should show Plex connection status."""
+        """Should show plex_connected field (always False in Gerbera mode)."""
         with patch("backend.main.get_config") as mock_config:
-            with patch("backend.main.get_plex_client") as mock_plex:
-                mock_config.return_value = create_mock_config()
-                mock_plex.return_value = MagicMock(is_connected=MagicMock(return_value=True))
+            mock_config.return_value = create_mock_config()
 
-                response = client.get("/api/health")
+            response = client.get("/api/health")
 
-                assert response.status_code == 200
-                data = response.json()
-                assert "plex_connected" in data
-                assert data["plex_connected"] is True
+            assert response.status_code == 200
+            data = response.json()
+            assert "plex_connected" in data
+            assert data["plex_connected"] is False
 
     def test_health_check_shows_llm_status(self, client):
         """Should show LLM configuration status."""
         with patch("backend.main.get_config") as mock_config:
-            with patch("backend.main.get_plex_client") as mock_plex:
-                mock_config.return_value = create_mock_config(llm_api_key="key")
-                mock_plex.return_value = None  # No Plex client
+            mock_config.return_value = create_mock_config(llm_api_key="key")
 
-                response = client.get("/api/health")
+            response = client.get("/api/health")
 
-                assert response.status_code == 200
-                data = response.json()
-                assert "llm_configured" in data
-                assert data["llm_configured"] is True
+            assert response.status_code == 200
+            data = response.json()
+            assert "llm_configured" in data
+            assert data["llm_configured"] is True
 
 
 class TestConfigEndpoints:
@@ -96,60 +90,46 @@ class TestConfigEndpoints:
     def test_get_config_returns_safe_values(self, client):
         """GET /api/config should return config without secrets."""
         with patch("backend.main.get_config") as mock_get_config:
-            with patch("backend.main.get_plex_client") as mock_plex:
-                mock_get_config.return_value = create_mock_config(
-                    plex_url="http://test:32400",
-                    plex_token="secret-token",
-                    llm_provider="anthropic",
-                    llm_api_key="secret-api-key",
-                )
-                mock_plex.return_value = MagicMock(is_connected=MagicMock(return_value=True))
+            mock_get_config.return_value = create_mock_config(
+                llm_provider="anthropic",
+                llm_api_key="secret-api-key",
+            )
 
-                response = client.get("/api/config")
+            response = client.get("/api/config")
 
-                assert response.status_code == 200
-                data = response.json()
+            assert response.status_code == 200
+            data = response.json()
 
-                # Should include URL but not token
-                assert data["plex_url"] == "http://test:32400"
-                assert "secret-token" not in str(data)
-
-                # Should show provider but not API key
-                assert data["llm_provider"] == "anthropic"
-                assert "api_key" not in data
-                assert "secret-api-key" not in str(data)
+            # Should show provider but not API key
+            assert data["llm_provider"] == "anthropic"
+            assert "api_key" not in data
+            assert "secret-api-key" not in str(data)
 
     def test_post_config_validates_plex_url(self, client):
-        """POST /api/config should validate Plex URL format."""
+        """POST /api/config should succeed for valid updates."""
         with patch("backend.main.update_config_values") as mock_update:
-            with patch("backend.main.get_plex_client") as mock_plex:
-                with patch("backend.main.init_plex_client"):
-                    mock_config = create_mock_config(plex_url="http://new-server:32400")
-                    mock_update.return_value = mock_config
-                    mock_plex.return_value = MagicMock(is_connected=MagicMock(return_value=True))
+            mock_config = create_mock_config()
+            mock_update.return_value = mock_config
 
-                    response = client.post(
-                        "/api/config",
-                        json={"plex_url": "http://new-server:32400"}
-                    )
+            response = client.post(
+                "/api/config",
+                json={"llm_provider": "openai"}
+            )
 
-                    assert response.status_code == 200
+            assert response.status_code == 200
 
     def test_post_config_updates_llm_provider(self, client):
         """POST /api/config should allow changing LLM provider."""
         with patch("backend.main.update_config_values") as mock_update:
-            with patch("backend.main.get_plex_client") as mock_plex:
-                with patch("backend.main.init_plex_client"):
-                    mock_config = create_mock_config(llm_provider="openai")
-                    mock_update.return_value = mock_config
-                    mock_plex.return_value = MagicMock(is_connected=MagicMock(return_value=True))
+            mock_config = create_mock_config(llm_provider="openai")
+            mock_update.return_value = mock_config
 
-                    response = client.post(
-                        "/api/config",
-                        json={"llm_provider": "openai"}
-                    )
+            response = client.post(
+                "/api/config",
+                json={"llm_provider": "openai"}
+            )
 
-                    assert response.status_code == 200
+            assert response.status_code == 200
 
 
 class TestIndexPage:
@@ -288,3 +268,33 @@ class TestOllamaEndpoints:
                 assert response.status_code == 200
                 # Verify the custom URL was passed
                 mock_status.assert_called_once_with("http://custom-host:11434")
+
+
+def test_get_library_artists_returns_list(client):
+    with patch("backend.library_cache.get_artists_with_stats", return_value=[
+        {"artist": "Radiohead", "track_count": 47, "is_new": False, "is_favorite": True},
+    ]):
+        response = client.get("/api/library/artists")
+        assert response.status_code == 200
+        data = response.json()
+        assert "artists" in data
+        assert data["artists"][0]["artist"] == "Radiohead"
+        assert data["artists"][0]["is_favorite"] is True
+
+
+def test_get_library_albums_returns_list(client):
+    with patch("backend.library_cache.get_albums_with_stats", return_value=[
+        {"artist": "Radiohead", "album": "OK Computer", "track_count": 12, "is_new": True, "is_favorite": False},
+    ]):
+        response = client.get("/api/library/albums")
+        assert response.status_code == 200
+        data = response.json()
+        assert "albums" in data
+        assert data["albums"][0]["album"] == "OK Computer"
+
+
+def test_toggle_favorite_returns_state(client):
+    with patch("backend.library_cache.toggle_favorite", return_value=True):
+        response = client.post("/api/favorites/toggle", json={"type": "artist", "artist": "Radiohead", "album": ""})
+        assert response.status_code == 200
+        assert response.json() == {"is_favorite": True}

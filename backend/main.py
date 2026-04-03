@@ -1,4 +1,4 @@
-"""FastAPI application for MediaSage."""
+"""FastAPI application for CrateMind."""
 
 import asyncio
 import json
@@ -22,19 +22,24 @@ from backend.version import get_version
 from backend.models import (
     AlbumCandidate,
     AlbumPreviewResponse,
+    AlbumStat,
     AnalyzePromptFiltersRequest,
     AnalyzePromptFiltersResponse,
     AnalyzePromptRequest,
     AnalyzePromptResponse,
     AnalyzeTrackRequest,
     AnalyzeTrackResponse,
+    ArtistStat,
     ConfigResponse,
     DecadeCount,
     FilterPreviewRequest,
     FilterPreviewResponse,
+    FavoritesPlaylistRequest,
     GenerateRequest,
     GenreCount,
     HealthResponse,
+    LibraryAlbumsResponse,
+    LibraryArtistsResponse,
     LibraryCacheStatusResponse,
     LibraryStatsResponse,
     OllamaModelInfo,
@@ -56,6 +61,7 @@ from backend.models import (
     SetupStatusResponse,
     SyncProgress,
     SyncTriggerResponse,
+    ToggleFavoriteRequest,
     UpdateConfigRequest,
     ValidateAIRequest,
     ValidateAIResponse,
@@ -63,8 +69,7 @@ from backend.models import (
 )
 from backend import library_cache
 from backend.gerbera_client import read_tracks
-from backend.library_cache import init_db, sync_tracks
-from backend.favorites import load_favorites
+from backend.library_cache import init_db, sync_tracks, DB_PATH as CACHE_DB_PATH
 from backend.generator import write_m3u
 from backend.llm_client import (
     TOKENS_PER_ALBUM,
@@ -79,7 +84,7 @@ from backend.llm_client import (
     list_ollama_models,
 )
 from backend.analyzer import analyze_prompt as do_analyze_prompt, analyze_track as do_analyze_track
-from backend.generator import generate_playlist_stream
+from backend.generator import generate_playlist_stream, generate_favorites_playlist_stream
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -108,7 +113,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="MediaSage",
+    title="CrateMind",
     description="Gerbera DLNA playlist generator powered by LLMs",
     version=get_version(),
     lifespan=lifespan,
@@ -129,6 +134,11 @@ def _is_llm_configured(config) -> bool:
     return bool(config.llm.api_key)
 
 
+def _is_gerbera_configured(config) -> bool:
+    """Return True when a Gerbera DB path is set (replaces plex_connected gating)."""
+    return bool(getattr(config, "gerbera", None) and config.gerbera.db_path)
+
+
 def _build_config_response(config) -> ConfigResponse:
     """Build a ConfigResponse from the current config."""
     generation_model = config.llm.model_generation
@@ -140,10 +150,11 @@ def _build_config_response(config) -> ConfigResponse:
     gen_costs = get_model_cost(generation_model, config.llm)
     analysis_costs = get_model_cost(analysis_model, config.llm)
 
+    gerbera_configured = _is_gerbera_configured(config)
     return ConfigResponse(
         version=get_version(),
         plex_url="",
-        plex_connected=False,
+        plex_connected=gerbera_configured,
         plex_token_set=False,
         music_library=None,
         llm_provider=config.llm.provider,
@@ -164,6 +175,8 @@ def _build_config_response(config) -> ConfigResponse:
         custom_context_window=config.llm.custom_context_window,
         is_local_provider=is_local,
         provider_from_env=os.environ.get("LLM_PROVIDER") is not None,
+        gerbera_db_path=config.gerbera.db_path,
+        gerbera_playlist_output_dir=config.gerbera.playlist_output_dir,
     )
 
 
@@ -179,7 +192,7 @@ async def health_check() -> HealthResponse:
 
     return HealthResponse(
         status="healthy",
-        plex_connected=False,
+        plex_connected=_is_gerbera_configured(config),
         llm_configured=_is_llm_configured(config),
     )
 
@@ -234,7 +247,7 @@ async def setup_status() -> SetupStatusResponse:
         process_uid=getattr(os, "getuid", lambda: 0)(),
         process_gid=getattr(os, "getgid", lambda: 0)(),
         data_dir=str(data_dir),
-        plex_connected=False,
+        plex_connected=_is_gerbera_configured(config),
         plex_error=None,
         plex_from_env=False,
         music_libraries=[],
@@ -351,6 +364,33 @@ async def setup_complete() -> SetupCompleteResponse:
 # =============================================================================
 
 
+@app.get("/api/browse")
+async def browse_filesystem(
+    path: str = Query("/", description="Directory path to list"),
+    mode: str = Query("all", description="'file' shows files+dirs, 'dir' shows dirs only"),
+):
+    """List files and directories on the server filesystem for path-picker UI."""
+    abs_path = os.path.abspath(path)
+    if not os.path.isdir(abs_path):
+        abs_path = "/"
+
+    entries = []
+    try:
+        with os.scandir(abs_path) as it:
+            for entry in sorted(it, key=lambda e: (not e.is_dir(follow_symlinks=False), e.name.lower())):
+                if entry.name.startswith("."):
+                    continue
+                is_dir = entry.is_dir(follow_symlinks=False)
+                if mode == "dir" and not is_dir:
+                    continue
+                entries.append({"name": entry.name, "path": entry.path, "is_dir": is_dir})
+    except PermissionError:
+        pass
+
+    parent = str(Path(abs_path).parent) if abs_path != "/" else None
+    return {"path": abs_path, "parent": parent, "entries": entries}
+
+
 @app.get("/api/config", response_model=ConfigResponse)
 async def get_configuration() -> ConfigResponse:
     """Get current configuration (without secrets)."""
@@ -445,7 +485,7 @@ async def get_library_status() -> LibraryCacheStatusResponse:
         is_syncing=state["is_syncing"],
         sync_progress=sync_progress,
         error=state["error"],
-        plex_connected=False,
+        plex_connected=True,
         needs_resync=library_cache.needs_resync(),
     )
 
@@ -460,15 +500,21 @@ async def trigger_library_sync():
     if progress["is_syncing"]:
         raise HTTPException(status_code=409, detail="Sync already in progress")
 
+    def _do_sync() -> int:
+        tracks = read_tracks(config.gerbera.db_path)
+        db_conn = init_db(str(CACHE_DB_PATH))
+        try:
+            sync_tracks(db_conn, tracks)
+            return len(tracks)
+        finally:
+            db_conn.close()
+
     try:
-        tracks = await asyncio.to_thread(read_tracks, config.gerbera.db_path)
-        db_conn = init_db(config.gerbera.db_path)
-        await asyncio.to_thread(sync_tracks, db_conn, tracks)
-        db_conn.close()
+        count = await asyncio.to_thread(_do_sync)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
 
-    return {"status": "ok", "tracks_synced": len(tracks)}
+    return {"status": "ok", "tracks_synced": count}
 
 
 # =============================================================================
@@ -507,19 +553,31 @@ async def search_library(q: str = Query(..., description="Search query")) -> lis
 
 
 # =============================================================================
-# Favorites Endpoint
+# Library / Favorites Endpoints
 # =============================================================================
 
 
-@app.get("/api/favorites")
-def get_favorites():
-    """Return favorite artists and albums from the favorites file."""
-    config = get_config()
-    favs = load_favorites(config.gerbera.favorites_file)
-    return {
-        "artists": sorted(favs.artists),
-        "albums": [{"artist": a, "album": b} for a, b in favs.albums],
-    }
+@app.get("/api/library/artists", response_model=LibraryArtistsResponse)
+async def get_library_artists(days_new: int = 30) -> LibraryArtistsResponse:
+    """Return all artists with track count, is_new and is_favorite flags."""
+    rows = await asyncio.to_thread(library_cache.get_artists_with_stats, days_new)
+    return LibraryArtistsResponse(artists=[ArtistStat(**r) for r in rows])
+
+
+@app.get("/api/library/albums", response_model=LibraryAlbumsResponse)
+async def get_library_albums(days_new: int = 30) -> LibraryAlbumsResponse:
+    """Return all albums with track count, is_new and is_favorite flags."""
+    rows = await asyncio.to_thread(library_cache.get_albums_with_stats, days_new)
+    return LibraryAlbumsResponse(albums=[AlbumStat(**r) for r in rows])
+
+
+@app.post("/api/favorites/toggle")
+async def toggle_favorite(request: ToggleFavoriteRequest) -> dict:
+    """Toggle a favorite artist or album. Returns current state."""
+    is_fav = await asyncio.to_thread(
+        library_cache.toggle_favorite, request.type, request.artist, request.album
+    )
+    return {"is_favorite": is_fav}
 
 
 # =============================================================================
@@ -681,6 +739,29 @@ async def generate_playlist_sse(request: GenerateRequest) -> StreamingResponse:
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable buffering for nginx/reverse proxies
+        },
+    )
+
+
+@app.post("/api/generate/favorites")
+async def generate_favorites_sse(request: FavoritesPlaylistRequest) -> StreamingResponse:
+    """Generate a favourites-mix playlist (70% favourites + 30% new) with SSE streaming."""
+    if not get_llm_client():
+        raise HTTPException(status_code=503, detail="LLM not configured")
+
+    def event_stream():
+        yield from generate_favorites_playlist_stream(
+            track_count=request.track_count,
+            max_tracks_to_ai=request.max_tracks_to_ai,
+        )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         },
     )
 
@@ -1495,8 +1576,10 @@ async def serve_index():
     index_path = frontend_path / "index.html"
     if index_path.exists():
         html = index_path.read_text()
-        v = get_version()
-        html = html.replace("/static/style.css", f"/static/style.css?v={v}")
-        html = html.replace("/static/app.js", f"/static/app.js?v={v}")
+        # Use file mtime for cache-busting so changes take effect without a commit
+        js_mtime = int((frontend_path / "app.js").stat().st_mtime)
+        css_mtime = int((frontend_path / "style.css").stat().st_mtime)
+        html = html.replace("/static/style.css", f"/static/style.css?v={css_mtime}")
+        html = html.replace("/static/app.js", f"/static/app.js?v={js_mtime}")
         return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
-    return {"message": "MediaSage API is running. Frontend not found."}
+    return {"message": "CrateMind API is running. Frontend not found."}
