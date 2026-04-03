@@ -4,15 +4,9 @@
 [![GHCR](https://img.shields.io/badge/ghcr-langdar2%2Fcratemind-blue)](https://ghcr.io/langdar2/cratemind)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
-**AI-powered playlists and album recommendations for Plex—using only music you actually own.**
+**AI-powered playlists and album recommendations for your self-hosted music library—using only music you actually own.**
 
-CrateMind is a self-hosted web app that creates playlists and recommends albums by combining LLM intelligence with your Plex library. Every suggestion is guaranteed playable because it only considers music you have.
-
-*Sample Generated Playlist:*
-![CrateMind Screenshot](docs/images/screenshot-playlist.png)
-
-*Sample Generated Album Recommendation:*
-![CrateMind Screenshot](docs/images/screenshot-album.png)
+CrateMind is a self-hosted web app that creates playlists and recommends albums by combining LLM intelligence with your local music library. It reads directly from [Gerbera's](https://gerbera.io) SQLite database and saves playlists as M3U files back into Gerbera's watched directory—no cloud accounts, no streaming services.
 
 *Home Screen:*
 ![CrateMind Screenshot](docs/images/screenshot-home.png)
@@ -20,8 +14,14 @@ CrateMind is a self-hosted web app that creates playlists and recommends albums 
 *Playlist Flow:*
 ![CrateMind Screenshot](docs/images/screenshot-playlist-start.png)
 
+*Sample Generated Playlist:*
+![CrateMind Screenshot](docs/images/screenshot-playlist.png)
+
 *Album Flow:*
 ![CrateMind Screenshot](docs/images/screenshot-album-start.png)
+
+*Album Recommendation Questions:*
+![CrateMind Screenshot](docs/images/screenshot-album.png)
 
 ---
 
@@ -31,16 +31,18 @@ CrateMind is a self-hosted web app that creates playlists and recommends albums 
 docker run -d \
   --name cratemind \
   -p 5765:5765 \
-  -v cratemind-data:/app/data \
+  -e GERBERA_DB_PATH=/gerbera/gerbera.db \
+  -e GERBERA_PLAYLIST_OUTPUT_DIR=/music/playlists \
+  -e GEMINI_API_KEY=your-key \
+  -v /path/to/gerbera.db:/gerbera/gerbera.db:ro \
+  -v /path/to/playlists:/music/playlists \
   --restart unless-stopped \
   ghcr.io/langdar2/cratemind:latest
 ```
 
-Open **http://localhost:5765** — a setup wizard walks you through connecting Plex, choosing an AI provider, and syncing your library.
+Open **http://localhost:5765** — a setup wizard walks you through pointing CrateMind at your Gerbera database and choosing an AI provider.
 
-You can also pass credentials as environment variables to skip the wizard. See [Configuration](#configuration) for details.
-
-**Requirements:** Docker, a Plex server with music, a [Plex token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/), and an API key from Google, Anthropic, or OpenAI (or a local model via Ollama).
+**Requirements:** Docker, a running [Gerbera](https://gerbera.io) DLNA server with a music library, and an API key from Google, Anthropic, or OpenAI (or a local model via Ollama).
 
 ---
 
@@ -58,21 +60,17 @@ You can also pass credentials as environment variables to skip the wizard. See [
 
 ## Why CrateMind?
 
-**Plex users with personal music libraries have few good options for AI playlists.**
+**Self-hosted music fans have few good options for AI playlists.**
 
-Plexamp's built-in Sonic Sage used ChatGPT to generate playlists, but it was designed around Tidal streaming. The AI recommended tracks from an unlimited catalog, and Tidal made them playable. The "limit to library" setting just hid results you didn't own—so if you asked for 25 tracks and only 4 existed in your library, you got a 4-track playlist.
+Generic tools like ChatGPT recommend from an infinite catalog with no awareness of what you actually own. The result is a list of tracks you may not have. CrateMind inverts the approach: it only ever sees your library, so every suggestion is guaranteed to exist on your machine.
 
-When [Tidal integration ended in October 2024](https://forums.plex.tv/t/tidal-integration-with-plex-ending-october-28-2024/885728), Sonic Sage lost its foundation. Generic tools like ChatGPT have the same problem: they recommend from an infinite catalog with no awareness of what you actually own.
-
-**CrateMind inverts the approach:**
-
-| Filter-Last (Sonic Sage, ChatGPT) | Filter-First (CrateMind) |
-|-----------------------------------|-------------------------|
+| Other tools (ChatGPT, etc.) | CrateMind |
+|-----------------------------|-----------|
 | AI recommends from infinite catalog | AI only sees your library |
-| Hide missing tracks after | No missing tracks possible |
+| Results may not exist locally | No missing tracks possible |
 | Near-empty playlists | Full playlists, every time |
 
-The result: every track in every playlist exists in your Plex library and plays immediately.
+Playlists are written as M3U files directly into Gerbera's watched directory, so they appear immediately in any DLNA client on your network.
 
 ---
 
@@ -93,7 +91,7 @@ Create playlists two ways:
 
 Describe a mood or moment, answer two quick questions about your preferences, and get a single perfect album to listen to—with an editorial pitch explaining why it fits.
 
-- **Library mode** — recommends albums you own, ready for instant playback
+- **Library mode** — recommends albums you already own
 - **Discovery mode** — suggests albums you don't own yet, based on your taste profile
 - **Familiarity control** — choose between comfort picks, hidden gems, or rediscoveries
 - **Show Me Another** — regenerate without starting over
@@ -104,19 +102,26 @@ Describe a mood or moment, answer two quick questions about your preferences, an
 Before the AI sees anything, you control the pool:
 - **Genres** — Select from your library's actual genre tags
 - **Decades** — Filter by era
-- **Minimum rating** — Only tracks rated 3+, 4+, etc.
+- **Play count** — Only tracks you've listened to at least N times
 - **Exclude live versions** — Skip concert recordings automatically
 
 Real-time track counts show exactly how your filters narrow results.
 
-### Local Library Cache
+### Direct Library Access
 
-CrateMind syncs your Plex library to a local SQLite database. After a one-time sync (~2 min for 18,000 tracks), all library operations—filtering, counting, sending to AI—happen locally in milliseconds instead of waiting on Plex.
+CrateMind reads your music library directly from Gerbera's SQLite database—no sync required, no Gerbera API calls. Track metadata (title, artist, album, genre, year, play count) is read from `gerbera.db` on startup and kept in a local cache for fast filtering.
 
-- **Setup wizard** walks you through first-run configuration and sync
-- **Footer status** shows track count and last sync time
-- **Auto-refresh** keeps cache current (syncs if >24h stale)
-- **Manual refresh** available anytime
+- **Setup wizard** walks you through first-run configuration
+- **Footer status** shows track count and last read time
+- **Manual refresh** re-reads the database on demand
+
+### Playlist Output
+
+Generated playlists are written as Extended M3U files into Gerbera's playlist directory:
+
+- Gerbera picks them up automatically and makes them available to all DLNA clients
+- Filenames include the date for easy browsing
+- Preview tracks before saving, remove ones you don't want, rename the playlist
 
 ### Multi-Provider Support
 
@@ -136,17 +141,6 @@ Bring your own API key—or run locally:
 
 Estimated cost displays before you generate. CrateMind auto-detects your provider based on which key you configure.
 
-### Play and Save
-
-- **Play Now** — send tracks directly to any Plex device for instant playback
-- **Create** a new playlist, **replace** an existing one, or **append** tracks to one
-- Device picker shows all active Plex clients with status indicators
-- Duplicate detection when appending to existing playlists
-- Preview tracks with album art before saving
-- Remove tracks you don't want
-- Rename the playlist
-- See actual token usage and cost
-
 ---
 
 ## Installation
@@ -156,21 +150,9 @@ Estimated cost displays before you generate. CrateMind auto-detects your provide
 ```bash
 mkdir cratemind && cd cratemind
 curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/.env.example
-mv .env.example .env
 ```
 
-Edit `.env`:
-
-```bash
-PLEX_URL=http://your-plex-server:32400
-PLEX_TOKEN=your-plex-token
-
-# Choose ONE provider:
-GEMINI_API_KEY=your-gemini-key
-# ANTHROPIC_API_KEY=sk-ant-your-key
-# OPENAI_API_KEY=sk-your-key
-```
+Edit `docker-compose.yml` and set the environment variables and volume paths for your setup (see [Configuration](#configuration)).
 
 Start:
 
@@ -188,14 +170,14 @@ docker compose up -d
 2. Download `latest` tag
 3. **Container** → **Create**
 4. Port: 5765 → 5765
-5. Add environment variables: `PLEX_URL`, `PLEX_TOKEN`, `GEMINI_API_KEY`
+5. Add environment variables: `GERBERA_DB_PATH`, `GERBERA_PLAYLIST_OUTPUT_DIR`, `GEMINI_API_KEY`
+6. Add volume mounts for your `gerbera.db` and playlist output directory
 
 **Docker Compose:**
 ```bash
 mkdir -p /volume1/docker/cratemind && cd /volume1/docker/cratemind
 curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/.env.example
-mv .env.example .env && nano .env
+nano docker-compose.yml  # set paths and API key
 ```
 Then in **Container Manager** → **Project** → **Create**, point to `/volume1/docker/cratemind`.
 
@@ -209,7 +191,8 @@ Then in **Container Manager** → **Project** → **Create**, point to `/volume1
 1. **Docker** → **Add Container**
 2. Repository: `ghcr.io/langdar2/cratemind:latest`
 3. Port: 5765 → 5765
-4. Add variables: `PLEX_URL`, `PLEX_TOKEN`, `GEMINI_API_KEY`
+4. Add variables: `GERBERA_DB_PATH`, `GERBERA_PLAYLIST_OUTPUT_DIR`, `GEMINI_API_KEY`
+5. Add path mappings for your `gerbera.db` and playlist directory
 
 </details>
 
@@ -219,7 +202,7 @@ Then in **Container Manager** → **Project** → **Create**, point to `/volume1
 1. **Apps** → **Discover Apps** → **Custom App**
 2. Image: `ghcr.io/langdar2/cratemind`, Tag: `latest`
 3. Port: 5765
-4. Add environment variables
+4. Add environment variables and storage paths
 
 </details>
 
@@ -235,10 +218,12 @@ services:
     ports:
       - "5765:5765"
     environment:
-      - PLEX_URL=http://your-server:32400
-      - PLEX_TOKEN=your-token
+      - GERBERA_DB_PATH=/gerbera/gerbera.db
+      - GERBERA_PLAYLIST_OUTPUT_DIR=/music/playlists
       - GEMINI_API_KEY=your-key
     volumes:
+      - /path/to/gerbera.db:/gerbera/gerbera.db:ro
+      - /path/to/playlists:/music/playlists
       - ./data:/app/data
     restart: unless-stopped
 ```
@@ -250,7 +235,7 @@ services:
 Docker isn't required. CrateMind is Python + FastAPI with no native dependencies, so it runs on any machine with Python 3.11+ — including ARM-based Synology NAS models, Raspberry Pis, or any Linux/macOS/Windows box.
 
 ```bash
-git clone https://github.com/langdar2/cratemind.git  # or your fork
+git clone https://github.com/langdar2/cratemind.git
 cd cratemind
 python -m venv venv
 source venv/bin/activate
@@ -260,8 +245,8 @@ pip install -r requirements.txt
 Set your environment variables:
 
 ```bash
-export PLEX_URL=http://your-plex-server:32400
-export PLEX_TOKEN=your-plex-token
+export GERBERA_DB_PATH=/path/to/gerbera.db
+export GERBERA_PLAYLIST_OUTPUT_DIR=/path/to/playlists
 export GEMINI_API_KEY=your-gemini-key
 ```
 
@@ -311,13 +296,14 @@ sudo systemctl start cratemind
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PLEX_URL` | Yes | Plex server URL (e.g., `http://192.168.1.100:32400`) |
-| `PLEX_TOKEN` | Yes | [Plex authentication token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/) |
+| `GERBERA_DB_PATH` | Yes | Path to your `gerbera.db` file (e.g. `/home/user/gerbera.db`) |
+| `GERBERA_PLAYLIST_OUTPUT_DIR` | Yes | Directory where M3U playlists are written (must be watched by Gerbera) |
+| `GERBERA_FAVORITES_FILE` | No | Favorites YAML file name (default: `favorites.yaml`) |
+| `GERBERA_MIN_PLAY_COUNT` | No | Only include tracks with at least this many plays (default: `0` = all tracks) |
 | `GEMINI_API_KEY` | One required | Google Gemini API key |
 | `ANTHROPIC_API_KEY` | One required | Anthropic API key |
 | `OPENAI_API_KEY` | One required | OpenAI API key |
 | `LLM_PROVIDER` | No | Force provider: `gemini`, `anthropic`, `openai`, `ollama`, `custom` |
-| `PLEX_MUSIC_LIBRARY` | No | Library name if not "Music" |
 | `OLLAMA_URL` | No | Ollama server URL (default: `http://localhost:11434`) |
 | `OLLAMA_CONTEXT_WINDOW` | No | Override detected context window for Ollama (default: 32768) |
 | `CUSTOM_LLM_URL` | No | Custom OpenAI-compatible API base URL |
@@ -330,11 +316,14 @@ You can also configure CrateMind through the **Settings** page in the web UI. Se
 
 ### Advanced: config.yaml
 
-Mount a config file for additional options:
+Mount a config file for full control:
 
 ```yaml
-plex:
-  music_library: "Music"
+gerbera:
+  db_path: "/home/user/gerbera.db"
+  playlist_output_dir: "/media/music/playlists"
+  favorites_file: "favorites.yaml"
+  min_play_count: 0  # 0 = all tracks; e.g. 3 = only tracks with >= 3 plays
 
 llm:
   provider: "gemini"
@@ -410,7 +399,7 @@ CrateMind uses a **filter-first architecture** designed for large libraries (50,
 │     LLM interprets your prompt → suggests genre/decade filters   │
 ├─────────────────────────────────────────────────────────────────┤
 │  2. FILTER                                                       │
-│     Plex library narrowed to matching tracks                     │
+│     Local library cache narrowed to matching tracks              │
 │     "90s Alternative" → 2,000 tracks                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  3. SAMPLE                                                       │
@@ -426,12 +415,12 @@ CrateMind uses a **filter-first architecture** designed for large libraries (50,
 │     Handles minor spelling/formatting differences                │
 ├─────────────────────────────────────────────────────────────────┤
 │  6. SAVE                                                         │
-│     Playlist created in Plex                                     │
-│     Ready in Plexamp or any Plex client                          │
+│     M3U playlist written to Gerbera's watched directory          │
+│     Appears instantly in all DLNA clients on your network        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-This ensures every track exists in your library while keeping API costs manageable.
+The library data comes directly from Gerbera's SQLite database (`gerbera.db`), which CrateMind reads in read-only mode. No Gerbera API calls are needed—just direct file access.
 
 ---
 
@@ -440,14 +429,14 @@ This ensures every track exists in your library while keeping API costs manageab
 ### Local Setup
 
 ```bash
-git clone https://github.com/langdar2/cratemind.git  # or your fork
+git clone https://github.com/langdar2/cratemind.git
 cd cratemind
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-export PLEX_URL=http://your-plex-server:32400
-export PLEX_TOKEN=your-plex-token
+export GERBERA_DB_PATH=/path/to/gerbera.db
+export GERBERA_PLAYLIST_OUTPUT_DIR=/path/to/playlists
 export GEMINI_API_KEY=your-key
 
 uvicorn backend.main:app --reload --port 5765
@@ -461,8 +450,10 @@ pytest tests/ -v
 
 ### Tech Stack
 
-- **Backend:** Python 3.11+, FastAPI, python-plexapi, rapidfuzz, httpx
+- **Backend:** Python 3.11+, FastAPI, rapidfuzz, httpx
 - **Frontend:** Vanilla HTML/CSS/JS (no build step)
+- **Library source:** Gerbera SQLite database (read-only)
+- **Playlist output:** Extended M3U files
 - **LLM SDKs:** anthropic, openai, google-genai (+ Ollama via REST API)
 - **Deployment:** Docker
 
@@ -477,20 +468,23 @@ Interactive documentation available at `/docs` when running.
 | `/api/health` | GET | Health check |
 | `/api/config` | GET/POST | Get or update configuration |
 | `/api/setup/status` | GET | Onboarding checklist state |
-| `/api/setup/validate-plex` | POST | Validate Plex credentials |
 | `/api/setup/validate-ai` | POST | Validate AI provider credentials |
 | `/api/setup/complete` | POST | Mark setup wizard as complete |
-| `/api/library/stats` | GET | Library statistics |
-| `/api/library/status` | GET | Cache state, track count, sync progress |
-| `/api/library/sync` | POST | Trigger background library sync |
+| `/api/browse` | GET | Browse the filesystem (for path configuration) |
+| `/api/library/status` | GET | Library state and track count |
+| `/api/library/sync` | POST | Re-read library from Gerbera database |
+| `/api/library/stats` | GET | Genre, decade, and artist statistics |
+| `/api/library/stats/cached` | GET | Cached library statistics |
 | `/api/library/search` | GET | Search library tracks |
+| `/api/library/artists` | GET | List all artists |
+| `/api/library/albums` | GET | List all albums |
+| `/api/favorites/toggle` | POST | Mark/unmark a track as favourite |
 | `/api/analyze/prompt` | POST | Analyze natural language prompt |
 | `/api/analyze/track` | POST | Analyze a seed track |
 | `/api/filter/preview` | POST | Preview filtered track list |
-| `/api/generate` | POST | Generate playlist |
 | `/api/generate/stream` | POST | Stream playlist generation (SSE) |
-| `/api/playlist` | POST | Save playlist to Plex |
-| `/api/playlist/update` | POST | Replace or append to a playlist |
+| `/api/generate/favorites` | POST | Generate a Favorites Mix playlist |
+| `/api/playlist` | POST | Save playlist as M3U file |
 | `/api/recommend/albums/preview` | GET | Preview album candidates for filters |
 | `/api/recommend/analyze-prompt` | POST | Analyze prompt for genre/decade filters |
 | `/api/recommend/questions` | POST | Generate clarifying questions |
@@ -498,10 +492,8 @@ Interactive documentation available at `/docs` when running.
 | `/api/recommend/switch-mode` | POST | Switch library/discovery mode |
 | `/api/results` | GET | List saved result history |
 | `/api/results/{id}` | GET/DELETE | Get or delete a saved result |
-| `/api/plex/clients` | GET | List active Plex clients |
-| `/api/plex/playlists` | GET | List existing Plex playlists |
-| `/api/play-queue` | POST | Send tracks to a Plex client |
-| `/api/art/{rating_key}` | GET | Proxy album art from Plex |
+| `/api/art/{rating_key}` | GET | Serve album art from local library |
+| `/api/external-art` | GET | Fetch album art from external sources |
 | `/api/ollama/status` | GET | Ollama connection status |
 | `/api/ollama/models` | GET | List available Ollama models |
 | `/api/ollama/model-info` | GET | Get model details (context window) |
