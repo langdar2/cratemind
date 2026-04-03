@@ -1,27 +1,13 @@
 services:
   cratemind:
     image: ghcr.io/langdar2/cratemind:latest
-    # To build locally instead, comment out 'image' and uncomment 'build':
+    # To build locally: comment out 'image' and uncomment 'build':
     # build: .
     container_name: cratemind
     # Optional: Run as specific user for NAS/Synology (use your PUID:PGID)
     # user: "1000:1000"
     ports:
       - "5765:5765"
-    environment:
-      # Gerbera database and playlist output (can also be set in the web UI)
-      - GERBERA_DB_PATH=/gerbera/gerbera.db
-      - GERBERA_PLAYLIST_OUTPUT_DIR=/music/playlists
-      # - GERBERA_MIN_PLAY_COUNT=0
-
-      # LLM API key — set one (can also be configured in the web UI)
-      # - GEMINI_API_KEY=your-key
-      # - ANTHROPIC_API_KEY=sk-ant-your-key
-      # - OPENAI_API_KEY=sk-your-key
-
-      # Local LLM: Ollama (experimental)
-      # - LLM_PROVIDER=ollama
-      # - OLLAMA_URL=http://host.docker.internal:11434
     volumes:
       # Mount your Gerbera database (read-only)
       - /path/to/gerbera.db:/gerbera/gerbera.db:ro
