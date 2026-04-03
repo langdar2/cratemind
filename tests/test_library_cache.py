@@ -168,3 +168,19 @@ def test_min_year_zero_is_respected():
     finally:
         conn.close()
         os.unlink(db_path)
+
+
+def test_init_db_creates_favorites_table():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        conn = init_db(db_path)
+        cursor = conn.execute("PRAGMA table_info(favorites)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "type" in columns
+        assert "artist" in columns
+        assert "album" in columns
+        assert "created_at" in columns
+    finally:
+        conn.close()
+        os.unlink(db_path)

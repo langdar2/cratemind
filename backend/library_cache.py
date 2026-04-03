@@ -69,19 +69,30 @@ def init_db(db_path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("""
         CREATE TABLE IF NOT EXISTS tracks (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            gerbera_id  INTEGER UNIQUE NOT NULL,
-            title       TEXT NOT NULL,
-            artist      TEXT NOT NULL,
-            album       TEXT NOT NULL,
-            genres      TEXT NOT NULL DEFAULT '[]',
-            year        INTEGER,
-            duration_ms INTEGER,
-            file_path   TEXT NOT NULL,
-            play_count  INTEGER DEFAULT 0,
-            is_live     BOOLEAN DEFAULT 0
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            gerbera_id     INTEGER UNIQUE NOT NULL,
+            title          TEXT NOT NULL,
+            artist         TEXT NOT NULL,
+            album          TEXT NOT NULL,
+            genres         TEXT NOT NULL DEFAULT '[]',
+            year           INTEGER,
+            duration_ms    INTEGER,
+            file_path      TEXT NOT NULL,
+            play_count     INTEGER DEFAULT 0,
+            is_live        BOOLEAN DEFAULT 0,
+            first_seen_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS favorites (
+            type       TEXT NOT NULL,
+            artist     TEXT NOT NULL,
+            album      TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(type, artist, album)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_favorites_artist ON favorites(artist)")
     conn.commit()
     return conn
 
@@ -119,7 +130,12 @@ def sync_tracks(conn: sqlite3.Connection, tracks: list[GerberaTrack]) -> None:
             year=excluded.year, duration_ms=excluded.duration_ms,
             file_path=excluded.file_path,
             play_count=excluded.play_count, is_live=excluded.is_live
+            -- first_seen_at intentionally excluded: preserve original insertion time
     """, rows)
+    conn.execute(
+        "UPDATE sync_state SET track_count = ?, last_sync_at = CURRENT_TIMESTAMP WHERE id = 1",
+        (len(rows),),
+    )
     conn.commit()
 
 
@@ -205,25 +221,27 @@ def init_schema(conn: sqlite3.Connection) -> bool:
         False if schema was already up-to-date or freshly created.
     """
     conn.executescript("""
-        -- Tracks table: cached Plex track metadata
+        -- Tracks table: cached Gerbera track metadata
         CREATE TABLE IF NOT EXISTS tracks (
-            rating_key TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            artist TEXT NOT NULL,
-            album TEXT NOT NULL,
-            duration_ms INTEGER,
-            year INTEGER,
-            genres TEXT,
-            user_rating INTEGER,
-            is_live BOOLEAN,
-            parent_rating_key TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            gerbera_id     INTEGER UNIQUE NOT NULL,
+            title          TEXT NOT NULL,
+            artist         TEXT,
+            album          TEXT,
+            genres         TEXT,
+            year           INTEGER,
+            duration_ms    INTEGER,
+            file_path      TEXT,
+            play_count     INTEGER DEFAULT 0,
+            is_live        BOOLEAN DEFAULT 0,
+            first_seen_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         -- Indexes for common query patterns
         CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
         CREATE INDEX IF NOT EXISTS idx_tracks_year ON tracks(year);
         CREATE INDEX IF NOT EXISTS idx_tracks_is_live ON tracks(is_live);
+        CREATE INDEX IF NOT EXISTS idx_tracks_gerbera_id ON tracks(gerbera_id);
 
         -- Sync state: single-row metadata table
         CREATE TABLE IF NOT EXISTS sync_state (
@@ -247,49 +265,37 @@ def init_schema(conn: sqlite3.Connection) -> bool:
             track_count INTEGER NOT NULL,
             artist TEXT,
             art_rating_key TEXT,
+            subtitle TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE INDEX IF NOT EXISTS idx_results_type_created ON results(type, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_results_created_at ON results(created_at DESC);
+
+        -- Favorites: user-marked favorite artists and albums
+        CREATE TABLE IF NOT EXISTS favorites (
+            type       TEXT NOT NULL,
+            artist     TEXT NOT NULL,
+            album      TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(type, artist, album)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_favorites_artist ON favorites(artist);
     """)
 
-    # Migration: add parent_rating_key column if missing (for pre-existing databases)
-    migrated = False
-    try:
-        conn.execute("ALTER TABLE tracks ADD COLUMN parent_rating_key TEXT")
-        migrated = True
-        logger.info("Migration applied: added parent_rating_key column")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-
-    # Migration: add view_count and last_viewed_at columns for familiarity tracking
-    try:
-        conn.execute("ALTER TABLE tracks ADD COLUMN view_count INTEGER DEFAULT 0")
-        migrated = True
-        logger.info("Migration applied: added view_count column")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-
-    try:
-        conn.execute("ALTER TABLE tracks ADD COLUMN last_viewed_at TEXT")
-        migrated = True
-        logger.info("Migration applied: added last_viewed_at column")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-
-    # Migration: add subtitle column to results table
-    try:
-        conn.execute("ALTER TABLE results ADD COLUMN subtitle TEXT")
-        logger.info("Migration applied: added subtitle column to results")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-
-    # Index on parent_rating_key (must come after migration adds the column)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_parent_key ON tracks(parent_rating_key)")
-
     conn.commit()
-    return migrated
+
+    # Incremental migration: add first_seen_at if missing (existing databases)
+    try:
+        conn.execute("ALTER TABLE tracks ADD COLUMN first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        conn.execute("UPDATE tracks SET first_seen_at = CURRENT_TIMESTAMP WHERE first_seen_at IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_first_seen ON tracks(first_seen_at)")
+        conn.commit()
+    except Exception:
+        pass  # Column already exists — no action needed
+
+    return False
 
 
 # Whether a migration was applied on startup (signals need for re-sync)
@@ -448,10 +454,15 @@ def get_tracks_by_filters(
             else:
                 track["genres"] = []
 
-            # Genre filtering in Python (JSON field doesn't support SQL IN)
+            # Genre filtering in Python (JSON field doesn't support SQL IN).
+            # Substring match so "Rock" matches "Indie Rock" and vice-versa.
             if genres:
-                track_genres = [g.lower() for g in track["genres"]]
-                if not any(g.lower() in track_genres for g in genres):
+                track_genres_lower = [g.lower() for g in track["genres"]]
+                requested_lower = [g.lower() for g in genres]
+                if not any(
+                    any(req in tg or tg in req for req in requested_lower)
+                    for tg in track_genres_lower
+                ):
                     continue
 
             tracks.append(track)
@@ -460,6 +471,31 @@ def get_tracks_by_filters(
         if limit > 0 and genres and len(tracks) > limit:
             tracks = random.sample(tracks, limit)
 
+        return tracks
+    finally:
+        conn.close()
+
+
+def get_new_tracks(limit: int = 300) -> list[dict[str, Any]]:
+    """Return the most recently added non-live tracks, newest first.
+
+    Tracks are ordered by first_seen_at DESC so genuinely new additions
+    (from syncs after the initial migration) surface first. Falls back to
+    id DESC ordering within ties (e.g. right after migration when all rows
+    share the same timestamp).
+    """
+    conn = ensure_db_initialized()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM tracks WHERE is_live = 0 "
+            "ORDER BY first_seen_at DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        tracks = []
+        for row in rows:
+            track = dict(row)
+            track["genres"] = json.loads(track["genres"]) if track.get("genres") else []
+            tracks.append(track)
         return tracks
     finally:
         conn.close()
@@ -602,6 +638,51 @@ def count_tracks_by_filters(
                     count += 1
 
         return count
+    finally:
+        conn.close()
+
+
+def search_tracks(query: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Search tracks by title, artist, or album (case-insensitive).
+
+    Args:
+        query: Search string
+        limit: Maximum number of results
+
+    Returns:
+        List of matching track dicts
+    """
+    conn = get_db_connection()
+    try:
+        pattern = f"%{query}%"
+        rows = conn.execute(
+            """SELECT * FROM tracks
+               WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?
+               LIMIT ?""",
+            (pattern, pattern, pattern, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_track_by_key(rating_key: str | int) -> dict[str, Any] | None:
+    """Look up a single track by its gerbera_id (rating_key).
+
+    Args:
+        rating_key: The gerbera_id of the track
+
+    Returns:
+        Track dict or None if not found
+    """
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM tracks WHERE gerbera_id = ?", (int(rating_key),)
+        ).fetchone()
+        return dict(row) if row else None
+    except (ValueError, TypeError):
+        return None
     finally:
         conn.close()
 
@@ -768,7 +849,8 @@ def get_cached_genre_decade_stats() -> dict[str, list[dict[str, Any]]]:
             key=lambda x: x["name"],
         )
 
-        return {"genres": genres, "decades": decades}
+        total_tracks = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        return {"genres": genres, "decades": decades, "total_tracks": total_tracks}
     finally:
         conn.close()
 
