@@ -254,3 +254,66 @@ def test_toggle_favorite_album():
     finally:
         conn.close()
         os.unlink(db_path)
+
+
+def test_get_artists_with_stats_returns_sorted_by_track_count():
+    from backend.library_cache import get_artists_with_stats
+    conn, db_path = make_db_with_favorites()
+    try:
+        # Insert tracks: Miles Davis 3 tracks, Radiohead 1 track
+        conn.executemany(
+            "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, is_live) VALUES (?,?,?,?,?,?,?)",
+            [
+                (1, "So What", "Miles Davis", "Kind of Blue", "[]", "/a.flac", 0),
+                (2, "All Blues", "Miles Davis", "Kind of Blue", "[]", "/b.flac", 0),
+                (3, "Blue in Green", "Miles Davis", "Kind of Blue", "[]", "/c.flac", 0),
+                (4, "Creep", "Radiohead", "Pablo Honey", "[]", "/d.flac", 0),
+            ],
+        )
+        conn.commit()
+        rows = get_artists_with_stats(conn=conn)
+        assert rows[0]["artist"] == "Miles Davis"
+        assert rows[0]["track_count"] == 3
+        assert rows[1]["artist"] == "Radiohead"
+        assert rows[1]["track_count"] == 1
+    finally:
+        conn.close()
+        os.unlink(db_path)
+
+
+def test_get_artists_with_stats_is_favorite_flag():
+    from backend.library_cache import get_artists_with_stats, toggle_favorite
+    conn, db_path = make_db_with_favorites()
+    try:
+        conn.execute(
+            "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, is_live) VALUES (1,'Creep','Radiohead','Pablo Honey','[]','/d.flac',0)"
+        )
+        conn.commit()
+        toggle_favorite("artist", "Radiohead", conn=conn)
+        rows = get_artists_with_stats(conn=conn)
+        assert rows[0]["is_favorite"] is True
+    finally:
+        conn.close()
+        os.unlink(db_path)
+
+
+def test_get_albums_with_stats_returns_sorted_by_track_count():
+    from backend.library_cache import get_albums_with_stats
+    conn, db_path = make_db_with_favorites()
+    try:
+        conn.executemany(
+            "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, is_live) VALUES (?,?,?,?,?,?,?)",
+            [
+                (1, "Track1", "Radiohead", "OK Computer", "[]", "/a.flac", 0),
+                (2, "Track2", "Radiohead", "OK Computer", "[]", "/b.flac", 0),
+                (3, "Creep",  "Radiohead", "Pablo Honey", "[]", "/c.flac", 0),
+            ],
+        )
+        conn.commit()
+        rows = get_albums_with_stats(conn=conn)
+        assert rows[0]["album"] == "OK Computer"
+        assert rows[0]["track_count"] == 2
+        assert rows[1]["album"] == "Pablo Honey"
+    finally:
+        conn.close()
+        os.unlink(db_path)

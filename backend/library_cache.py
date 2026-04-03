@@ -906,6 +906,110 @@ def toggle_favorite(
             conn.close()
 
 
+def get_artists_with_stats(
+    days_new: int = 30,
+    conn: sqlite3.Connection | None = None,
+) -> list[dict]:
+    """Return artists with track count, is_new, is_favorite flags, sorted by track count desc.
+
+    Args:
+        days_new: Number of days within which an artist is considered 'new' (first seen).
+        conn: Optional connection (used in tests).
+    """
+    close_after = conn is None
+    if conn is None:
+        conn = ensure_db_initialized()
+    try:
+        rows = conn.execute("""
+            SELECT
+                t.artist,
+                COUNT(*) AS track_count,
+                MIN(t.first_seen_at) AS first_seen,
+                EXISTS(
+                    SELECT 1 FROM favorites f
+                    WHERE f.type = 'artist' AND LOWER(f.artist) = LOWER(t.artist)
+                ) AS is_favorite
+            FROM tracks t
+            WHERE t.is_live = 0
+            GROUP BY t.artist
+            ORDER BY track_count DESC
+        """).fetchall()
+        from datetime import timedelta
+        cutoff_dt = datetime.utcnow() - timedelta(days=days_new)
+        result = []
+        for row in rows:
+            first_seen = row["first_seen"]
+            try:
+                fs_dt = datetime.fromisoformat(first_seen) if first_seen else None
+            except (ValueError, TypeError):
+                fs_dt = None
+            is_new = fs_dt is not None and fs_dt >= cutoff_dt
+            result.append({
+                "artist": row["artist"],
+                "track_count": row["track_count"],
+                "is_new": is_new,
+                "is_favorite": bool(row["is_favorite"]),
+            })
+        return result
+    finally:
+        if close_after:
+            conn.close()
+
+
+def get_albums_with_stats(
+    days_new: int = 30,
+    conn: sqlite3.Connection | None = None,
+) -> list[dict]:
+    """Return albums with track count, is_new, is_favorite flags, sorted by track count desc.
+
+    Args:
+        days_new: Number of days within which an album is considered 'new' (first seen).
+        conn: Optional connection (used in tests).
+    """
+    close_after = conn is None
+    if conn is None:
+        conn = ensure_db_initialized()
+    try:
+        rows = conn.execute("""
+            SELECT
+                t.artist,
+                t.album,
+                COUNT(*) AS track_count,
+                MIN(t.first_seen_at) AS first_seen,
+                EXISTS(
+                    SELECT 1 FROM favorites f
+                    WHERE f.type = 'album'
+                      AND LOWER(f.artist) = LOWER(t.artist)
+                      AND LOWER(f.album)  = LOWER(t.album)
+                ) AS is_favorite
+            FROM tracks t
+            WHERE t.is_live = 0
+            GROUP BY t.artist, t.album
+            ORDER BY track_count DESC
+        """).fetchall()
+        from datetime import timedelta
+        cutoff_dt = datetime.utcnow() - timedelta(days=days_new)
+        result = []
+        for row in rows:
+            first_seen = row["first_seen"]
+            try:
+                fs_dt = datetime.fromisoformat(first_seen) if first_seen else None
+            except (ValueError, TypeError):
+                fs_dt = None
+            is_new = fs_dt is not None and fs_dt >= cutoff_dt
+            result.append({
+                "artist": row["artist"],
+                "album": row["album"],
+                "track_count": row["track_count"],
+                "is_new": is_new,
+                "is_favorite": bool(row["is_favorite"]),
+            })
+        return result
+    finally:
+        if close_after:
+            conn.close()
+
+
 def get_album_familiarity(
     parent_rating_keys: list[str] | None = None,
 ) -> dict[str, dict]:
