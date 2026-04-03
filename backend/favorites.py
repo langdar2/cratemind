@@ -1,4 +1,3 @@
-import yaml
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -9,20 +8,19 @@ class Favorites:
     albums: set[tuple[str, str]] = field(default_factory=set)  # (artist_lower, album_lower)
 
 
-def load_favorites(path: str) -> Favorites:
-    """Load favorites from a YAML file. Returns empty Favorites if file not found."""
+def load_favorites() -> Favorites:
+    """Load favorites from the SQLite library cache. Returns empty Favorites if table missing."""
+    from backend import library_cache
+    conn = library_cache.ensure_db_initialized()
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except FileNotFoundError:
+        rows = conn.execute("SELECT type, artist, album FROM favorites").fetchall()
+        artists = {r["artist"].lower() for r in rows if r["type"] == "artist"}
+        albums = {(r["artist"].lower(), r["album"].lower()) for r in rows if r["type"] == "album"}
+        return Favorites(artists=artists, albums=albums)
+    except Exception:
         return Favorites()
-
-    artists = {a.lower() for a in data.get("artists", [])}
-    albums = {
-        (entry["artist"].lower(), entry["album"].lower())
-        for entry in data.get("albums", [])
-    }
-    return Favorites(artists=artists, albums=albums)
+    finally:
+        conn.close()
 
 
 def is_favorite(favs: Favorites, artist: str, album: Optional[str] = None) -> bool:
