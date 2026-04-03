@@ -3,7 +3,9 @@
 import json
 import json as _json
 import logging
+import random as _random
 import re as _re
+import unicodedata as _unicodedata
 from collections.abc import Generator
 from datetime import datetime
 from datetime import date as _date
@@ -11,11 +13,93 @@ from pathlib import Path
 
 from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
-from backend.plex_client import PlexQueryError, get_plex_client
 from backend import library_cache
 from backend.favorites import Favorites, is_favorite
 
 logger = logging.getLogger(__name__)
+
+# Fuzzy matching threshold (0-100 scale)
+FUZZ_THRESHOLD = 85
+
+
+def simplify_string(s: str) -> str:
+    """Normalize a string for fuzzy matching: lowercase, strip accents, remove punctuation."""
+    s = _unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if _unicodedata.category(c) != "Mn")
+    return _re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+
+
+def normalize_artist(artist: str) -> list[str]:
+    """Return artist name variants for fuzzy matching (handles 'and' vs '&')."""
+    variants = [artist]
+    if " & " in artist:
+        variants.append(artist.replace(" & ", " and "))
+    if " and " in artist.lower():
+        variants.append(_re.sub(r"\band\b", "&", artist, flags=_re.IGNORECASE))
+    return list(dict.fromkeys(variants))  # deduplicate preserving order
+
+
+def is_live_version(track) -> bool:
+    """Return True if the track or its album title suggests a live recording."""
+    keywords = ["live", "concert", "in concert", "live at", "live from", "mtv unplugged"]
+    title = (track.title or "").lower()
+    try:
+        album_title = (track.album().title or "").lower()
+    except Exception:
+        album_title = ""
+    # Also handle date patterns like (2005-06-22) typical in live bootlegs
+    date_pattern = _re.compile(r"\d{4}[-/]\d{2}[-/]\d{2}")
+    return (
+        any(kw in title for kw in keywords)
+        or any(kw in album_title for kw in keywords)
+        or bool(date_pattern.search(title))
+        or bool(date_pattern.search(album_title))
+    )
+
+
+def _diversify_tracks(tracks: list[Track], max_per_artist: int = 6) -> list[Track]:
+    """Cap tracks per artist so the LLM prompt pool has broad variety."""
+    counts: dict[str, int] = {}
+    result = []
+    for track in tracks:
+        key = track.artist.lower()
+        if counts.get(key, 0) < max_per_artist:
+            result.append(track)
+            counts[key] = counts.get(key, 0) + 1
+    return result
+
+
+def _weighted_sample(tracks: list[Track], target: int) -> list[Track]:
+    """Sample tracks with a 70/30 played-vs-unplayed split.
+
+    Keeps familiar favourites in reach while surfacing undiscovered tracks.
+    Falls back gracefully when one bucket is smaller than expected.
+    """
+    if len(tracks) <= target:
+        return tracks
+
+    played = [t for t in tracks if t.play_count > 0]
+    unplayed = [t for t in tracks if t.play_count == 0]
+
+    n_played = min(round(target * 0.7), len(played))
+    n_unplayed = min(target - n_played, len(unplayed))
+
+    # Fill any shortfall from the other bucket
+    shortage = target - n_played - n_unplayed
+    if shortage > 0:
+        if len(played) > n_played:
+            n_played = min(n_played + shortage, len(played))
+        elif len(unplayed) > n_unplayed:
+            n_unplayed = min(n_unplayed + shortage, len(unplayed))
+
+    result: list[Track] = []
+    if n_played > 0:
+        result.extend(_random.sample(played, n_played))
+    if n_unplayed > 0:
+        result.extend(_random.sample(unplayed, n_unplayed))
+
+    _random.shuffle(result)
+    return result
 
 
 def generate_narrative(
@@ -93,36 +177,34 @@ def generate_narrative(
 
 def _cached_track_to_model(cached: dict) -> Track:
     """Convert a cached track dict to a Track model."""
+    gerbera_id = str(cached.get("gerbera_id") or cached.get("id") or "")
     return Track(
-        rating_key=cached["rating_key"],
+        rating_key=gerbera_id,
         title=cached["title"],
         artist=cached["artist"],
         album=cached["album"],
         duration_ms=cached.get("duration_ms") or 0,
         year=cached.get("year"),
         genres=cached.get("genres") or [],
-        art_url=f"/api/art/{cached['rating_key']}",
+        art_url="",
         play_count=cached.get("play_count") or 0,
     )
 
 
-def _get_tracks_from_cache_or_plex(
-    plex_client,
+def _get_tracks_from_cache(
     genres: list[str] | None,
     decades: list[str] | None,
     exclude_live: bool,
     min_rating: int,
     max_tracks_to_ai: int,
 ) -> list[Track]:
-    """Get tracks from cache if available, otherwise from Plex.
+    """Get tracks from local library cache.
 
     Returns:
         List of Track objects
     """
-    has_filters = genres or decades or min_rating > 0
     effective_limit = max_tracks_to_ai if max_tracks_to_ai > 0 else 2000
 
-    # Try cache first
     if library_cache.has_cached_tracks():
         logger.info("Using cached tracks for generation")
         cached_tracks = library_cache.get_tracks_by_filters(
@@ -134,21 +216,8 @@ def _get_tracks_from_cache_or_plex(
         )
         return [_cached_track_to_model(t) for t in cached_tracks]
 
-    # Fall back to Plex
-    logger.info("Cache empty, fetching from Plex")
-    if not has_filters:
-        return plex_client.get_random_tracks(
-            count=effective_limit,
-            exclude_live=exclude_live,
-        )
-    else:
-        return plex_client.get_tracks_by_filters(
-            genres=genres,
-            decades=decades,
-            exclude_live=exclude_live,
-            min_rating=min_rating,
-            limit=effective_limit,
-        )
+    logger.warning("Library cache is empty — no tracks available")
+    return []
 
 
 def write_m3u(
@@ -214,62 +283,54 @@ def generate_playlist_stream(
     try:
         logger.info("Starting playlist generation (streaming)")
         llm_client = get_llm_client()
-        plex_client = get_plex_client()
 
         if not llm_client:
             yield emit("error", {"message": "LLM client not initialized"})
             return
-        if not plex_client:
-            yield emit("error", {"message": "Plex client not initialized"})
-            return
 
         has_filters = genres or decades or min_rating > 0
 
-        # Step 1: Fetch tracks from cache or Plex
-        using_cache = library_cache.has_cached_tracks()
-        if using_cache:
-            yield emit("progress", {"step": "fetching", "message": "Loading tracks from cache..."})
-        elif not has_filters:
-            yield emit("progress", {"step": "fetching", "message": "Sampling random tracks from library..."})
-        else:
-            yield emit("progress", {"step": "fetching", "message": "Fetching tracks from library..."})
+        # Step 1: Fetch tracks from local cache
+        yield emit("progress", {"step": "fetching", "message": "Loading tracks from library cache..."})
 
-        logger.info("Fetching tracks: genres=%s, decades=%s, min_rating=%s, using_cache=%s",
-                    genres, decades, min_rating, using_cache)
-        try:
-            filtered_tracks = _get_tracks_from_cache_or_plex(
-                plex_client=plex_client,
-                genres=genres,
-                decades=decades,
-                exclude_live=exclude_live,
-                min_rating=min_rating,
-                max_tracks_to_ai=max_tracks_to_ai,
-            )
-        except PlexQueryError as e:
-            yield emit("error", {"message": f"Plex server error: {e}"})
-            return
+        # Fetch a larger pool so diversity + weighted sampling have material to work with.
+        # For high-context providers (Gemini) the pool equals the target; for others we
+        # fetch up to 3x to give the two sampling passes room to operate.
+        pool_size = max(max_tracks_to_ai, min(max_tracks_to_ai * 3, 3000))
+        logger.info("Fetching tracks: genres=%s, decades=%s, min_rating=%s, pool_size=%s",
+                    genres, decades, min_rating, pool_size)
+        raw_pool = _get_tracks_from_cache(
+            genres=genres,
+            decades=decades,
+            exclude_live=exclude_live,
+            min_rating=min_rating,
+            max_tracks_to_ai=pool_size,
+        )
 
-        logger.info("Got %d tracks", len(filtered_tracks))
-
-        if not filtered_tracks:
+        if not raw_pool:
             yield emit("error", {"message": "No tracks match the selected filters. Try broadening your selection."})
             return
 
-        # Step 2: Report track count (sampling already done server-side)
+        # Apply artist diversity cap then play-count-weighted sampling
+        diverse_pool = _diversify_tracks(raw_pool, max_per_artist=6)
+        filtered_tracks = _weighted_sample(diverse_pool, max_tracks_to_ai)
+
+        logger.info("Pool: %d raw → %d after diversity → %d after weighted sample",
+                    len(raw_pool), len(diverse_pool), len(filtered_tracks))
+
+        # Step 2: Report track count
         if has_filters:
             yield emit("progress", {"step": "filtering", "message": f"Using {len(filtered_tracks)} tracks..."})
         else:
-            yield emit("progress", {"step": "filtering", "message": f"Using {len(filtered_tracks)} random tracks..."})
+            yield emit("progress", {"step": "filtering", "message": f"Using {len(filtered_tracks)} tracks (70/30 played/new)…"})
 
         # Step 3: Build track list
         yield emit("progress", {"step": "preparing", "message": f"Preparing {len(filtered_tracks)} tracks for AI..."})
 
-        # Load favorites for prompt boost (no-op if favorites.yaml missing)
+        # Load favorites for prompt boost (no-op if file missing or not configured)
         try:
             from backend.favorites import load_favorites
-            import os as _os
-            _favs_path = _os.path.join(_os.path.dirname(__file__), "..", "favorites.yaml")
-            _favs = load_favorites(_favs_path)
+            _favs = load_favorites()
         except Exception:
             _favs = Favorites()
 
@@ -326,6 +387,9 @@ def generate_playlist_stream(
         matched_tracks: list[Track] = []
         used_keys: set[str] = set()
         track_reasons: dict[str, str] = {}
+        # Scale max tracks per artist with playlist size: 3 for 25 tracks, 6 for 50, etc.
+        max_per_artist_final = max(2, track_count // 8)
+        artist_final_counts: dict[str, int] = {}
 
         if seed_track:
             used_keys.add(seed_track.rating_key)
@@ -343,11 +407,14 @@ def generate_playlist_stream(
                     continue
 
                 if _tracks_match(artist, title, track):
-                    matched_tracks.append(track)
-                    used_keys.add(track.rating_key)
-                    if reason:
-                        track_reasons[track.rating_key] = reason
-                    break
+                    artist_key = track.artist.lower()
+                    if artist_final_counts.get(artist_key, 0) < max_per_artist_final:
+                        matched_tracks.append(track)
+                        used_keys.add(track.rating_key)
+                        artist_final_counts[artist_key] = artist_final_counts.get(artist_key, 0) + 1
+                        if reason:
+                            track_reasons[track.rating_key] = reason
+                    break  # Match found; move on regardless of whether it was accepted
 
         # Step 7: Generate narrative
         yield emit("progress", {"step": "narrative", "message": "Writing playlist narrative..."})
@@ -487,13 +554,269 @@ Return ONLY valid JSON:
 No markdown formatting, no explanations - just the JSON object."""
 
 
+def generate_favorites_playlist_stream(
+    track_count: int = 30,
+    max_tracks_to_ai: int = 500,
+) -> Generator[str, None, None]:
+    """Generate a playlist mixing favorites (~70%) with new library additions (~30%).
+
+    Yields SSE-formatted events identical to generate_playlist_stream.
+    """
+    def emit(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    try:
+        llm_client = get_llm_client()
+        if not llm_client:
+            yield emit("error", {"message": "LLM client not initialized"})
+            return
+
+        yield emit("progress", {"step": "fetching", "message": "Lade Favoriten aus der Bibliothek…"})
+
+        # Load favorites
+        try:
+            favs = load_favorites()
+        except Exception:
+            favs = Favorites()
+
+        if not favs.artists and not favs.albums:
+            yield emit("error", {
+                "message": "Keine Favoriten konfiguriert. Bitte erst Künstler/Alben in favorites.yaml eintragen."
+            })
+            return
+
+        # Fetch all non-live tracks and split by favorites
+        all_tracks = library_cache.get_tracks_by_filters(exclude_live=True, limit=0)
+
+        fav_tracks = [
+            t for t in all_tracks
+            if is_favorite(favs, t.get("artist", ""), t.get("album", ""))
+        ]
+
+        if not fav_tracks:
+            yield emit("error", {"message": "Keine Tracks von Favoriten-Künstlern in der Bibliothek gefunden."})
+            return
+
+        # Get recently added non-favorite tracks
+        new_candidates = library_cache.get_new_tracks(limit=400)
+        new_tracks = [
+            t for t in new_candidates
+            if not is_favorite(favs, t.get("artist", ""), t.get("album", ""))
+        ]
+
+        # Fallback: unplayed non-favorites if not enough truly new tracks
+        if len(new_tracks) < 30:
+            other_tracks = [
+                t for t in all_tracks
+                if not is_favorite(favs, t.get("artist", ""), t.get("album", ""))
+            ]
+            known_new_ids = {t.get("gerbera_id") for t in new_tracks}
+            unplayed = [
+                t for t in other_tracks
+                if t.get("play_count", 0) == 0 and t.get("gerbera_id") not in known_new_ids
+            ]
+            _random.shuffle(unplayed)
+            new_tracks.extend(unplayed[:max(0, 100 - len(new_tracks))])
+
+        yield emit("progress", {
+            "step": "filtering",
+            "message": f"{len(fav_tracks)} Favoriten-Tracks, {len(new_tracks)} neue Tracks gefunden.",
+        })
+
+        # Build curated pool: apply artist diversity cap on favorites, keep new tracks ordered by recency
+        _random.shuffle(fav_tracks)
+        fav_counts: dict[str, int] = {}
+        fav_pool: list[dict] = []
+        for t in fav_tracks:
+            key = (t.get("artist") or "").lower()
+            if fav_counts.get(key, 0) < 8:
+                fav_pool.append(t)
+                fav_counts[key] = fav_counts.get(key, 0) + 1
+
+        # Trim pools so total fits in max_tracks_to_ai
+        max_new = min(len(new_tracks), 200)
+        max_fav = min(len(fav_pool), max_tracks_to_ai - max_new, 350)
+        if len(fav_pool) > max_fav:
+            fav_pool = _random.sample(fav_pool, max_fav)
+        new_pool = new_tracks[:max_new]
+
+        combined = fav_pool + new_pool
+        fav_ids = {t.get("gerbera_id") for t in fav_pool}
+        new_ids = {t.get("gerbera_id") for t in new_pool}
+
+        # Build tagged track list for the LLM
+        track_lines = []
+        for i, track in enumerate(combined):
+            gid = track.get("gerbera_id")
+            genres_raw = track.get("genres", [])
+            genres = genres_raw if isinstance(genres_raw, list) else _json.loads(genres_raw or "[]")
+            genre_str = ", ".join(genres) if genres else "unknown"
+            tag = " [FAVORITE]" if gid in fav_ids else (" [NEW]" if gid in new_ids else "")
+            track_lines.append(
+                f"{i + 1}. {track.get('artist', '')} — {track.get('title', '')} "
+                f"({track.get('album', '')}, {track.get('year', '?')}, "
+                f"Genre: {genre_str}, Plays: {track.get('play_count', 0)}){tag}"
+            )
+
+        n_fav = round(track_count * 0.7)
+        n_new = track_count - n_fav
+        generation_prompt = (
+            f"Select {track_count} tracks: approximately {n_fav} from [FAVORITE] tracks "
+            f"and approximately {n_new} from [NEW] tracks.\n\n"
+            + "\n".join(track_lines)
+        )
+
+        yield emit("progress", {"step": "ai_working", "message": "KI stellt Favoriten-Mix zusammen…"})
+
+        response = llm_client.generate(generation_prompt, FAVORITES_SYSTEM)
+        logger.info("Favorites LLM response: %d input, %d output tokens",
+                    response.input_tokens, response.output_tokens)
+
+        yield emit("progress", {"step": "parsing", "message": "Auswahl wird verarbeitet…"})
+
+        track_selections = llm_client.parse_json_response(response)
+        if not isinstance(track_selections, list):
+            yield emit("error", {"message": "LLM returned invalid format"})
+            return
+
+        yield emit("progress", {"step": "matching", "message": "Tracks werden abgeglichen…"})
+
+        # Convert dicts to Track objects for fuzzy matching
+        pool_as_tracks = [
+            Track(
+                rating_key=str(t.get("gerbera_id", "")),
+                title=t.get("title", ""),
+                artist=t.get("artist", ""),
+                album=t.get("album", ""),
+                duration_ms=t.get("duration_ms") or 0,
+                year=t.get("year"),
+                genres=t.get("genres", []) if isinstance(t.get("genres"), list) else [],
+                art_url="",
+                play_count=t.get("play_count") or 0,
+            )
+            for t in combined
+        ]
+
+        matched_tracks: list[Track] = []
+        used_keys: set[str] = set()
+        track_reasons: dict[str, str] = {}
+        max_per_artist_final = max(2, track_count // 8)
+        artist_final_counts: dict[str, int] = {}
+
+        for selection in track_selections:
+            if len(matched_tracks) >= track_count:
+                break
+            sel_artist = selection.get("artist", "")
+            sel_title = selection.get("title", "")
+            reason = selection.get("reason", "")
+            for track in pool_as_tracks:
+                if track.rating_key in used_keys:
+                    continue
+                if _tracks_match(sel_artist, sel_title, track):
+                    artist_key = track.artist.lower()
+                    if artist_final_counts.get(artist_key, 0) < max_per_artist_final:
+                        matched_tracks.append(track)
+                        used_keys.add(track.rating_key)
+                        artist_final_counts[artist_key] = artist_final_counts.get(artist_key, 0) + 1
+                        if reason:
+                            track_reasons[track.rating_key] = reason
+                    break
+
+        yield emit("progress", {"step": "narrative", "message": "Playlist-Titel wird erstellt…"})
+
+        playlist_title, narrative = generate_narrative(track_selections, llm_client, "Favoriten-Mix")
+
+        yield emit("narrative", {
+            "playlist_title": playlist_title,
+            "narrative": narrative,
+            "track_reasons": track_reasons,
+            "user_request": "Favoriten-Mix",
+        })
+
+        yield emit("progress", {"step": "complete", "message": "Playlist bereit!"})
+
+        try:
+            result = GenerateResponse(
+                tracks=matched_tracks,
+                token_count=response.total_tokens,
+                estimated_cost=response.estimated_cost(),
+                playlist_title=playlist_title,
+                narrative=narrative,
+                track_reasons=track_reasons,
+            )
+        except Exception as e:
+            logger.exception("Failed to build GenerateResponse: %s", e)
+            yield emit("error", {"message": f"Failed to build response: {e}"})
+            return
+
+        tracks_data = [t.model_dump(mode="json") for t in result.tracks]
+        for i in range(0, len(tracks_data), 5):
+            yield emit("tracks", {"batch": tracks_data[i:i + 5], "index": i})
+
+        result_id = None
+        try:
+            result_id = library_cache.save_result(
+                result_type="favorites_playlist",
+                title=playlist_title,
+                prompt="Favoriten-Mix",
+                snapshot=result.model_dump(mode="json"),
+                track_count=len(matched_tracks),
+                art_rating_key=matched_tracks[0].rating_key if matched_tracks else None,
+                subtitle=f"Favoriten-Mix · {len(matched_tracks)} Tracks",
+            )
+        except Exception as e:
+            logger.warning("Failed to save result: %s", e)
+
+        complete_data: dict = {
+            "track_count": len(result.tracks),
+            "token_count": result.token_count,
+            "estimated_cost": result.estimated_cost,
+            "playlist_title": result.playlist_title,
+            "narrative": result.narrative,
+            "track_reasons": result.track_reasons,
+        }
+        if result_id:
+            complete_data["result_id"] = result_id
+        yield emit("complete", complete_data)
+        yield ": heartbeat\n\n"
+
+    except Exception as e:
+        logger.exception("Error during favorites playlist generation")
+        yield emit("error", {"message": str(e)})
+
+
+FAVORITES_SYSTEM = """You are a music curator creating a personal "Favorites Mix" playlist.
+
+The track list contains tracks tagged as:
+- [FAVORITE] = from the user's favourite artists or albums
+- [NEW] = recently added to the library, not yet heard much
+- (no tag) = general library
+
+Your task: select the requested number of tracks forming a cohesive mix where:
+- Approximately 70% are [FAVORITE] tracks (the familiar, beloved core)
+- Approximately 30% are [NEW] tracks that complement the favourites in style, mood, or era
+
+Guidelines:
+- Choose [NEW] tracks that feel like natural companions to the [FAVORITE] tracks
+- Vary artists — do not pick too many tracks from the same artist
+- The [NEW] tracks should feel like exciting discoveries that fit the musical DNA of the favourites
+- Consider the flow of the playlist as a whole
+
+Return ONLY a JSON array:
+[
+  {"artist": "Artist Name", "title": "Track Title", "reason": "One sentence why it fits."},
+  ...
+]
+
+No markdown, no explanations — just the JSON array."""
+
+
 def _tracks_match(llm_artist: str, llm_title: str, library_track: Track) -> bool:
     """Check if LLM selection matches a library track.
 
     Uses fuzzy matching to handle slight variations in naming.
     """
     from rapidfuzz import fuzz
-    from backend.plex_client import simplify_string, normalize_artist, FUZZ_THRESHOLD
 
     # Compare titles
     simplified_llm_title = simplify_string(llm_title)
