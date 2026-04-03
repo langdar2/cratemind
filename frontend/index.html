@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MediaSage</title>
+    <title>CrateMind</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap" rel="stylesheet">
@@ -14,7 +14,7 @@
     <div class="app">
         <!-- Header -->
         <header class="header">
-            <h1 class="logo"><a href="#home" class="logo-link">MediaSage</a></h1>
+            <h1 class="logo"><a href="#home" class="logo-link">CrateMind</a></h1>
             <nav class="nav" role="navigation" aria-label="Main navigation">
                 <div class="nav-dropdown">
                     <button class="nav-dropdown-trigger" aria-expanded="false" aria-haspopup="true">
@@ -30,6 +30,7 @@
                     </div>
                 </div>
                 <button class="nav-btn" data-nav="recommend-album" aria-current="false">Recommend Album</button>
+                <button class="nav-btn" data-nav="library" aria-current="false">Library</button>
                 <button class="nav-btn nav-btn--icon" data-nav="settings" aria-current="false" aria-label="Settings"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
             </nav>
         </header>
@@ -46,7 +47,7 @@
                 <!-- Setup Wizard (shown on first launch) -->
                 <div id="setup-wizard" class="setup-wizard hidden">
                     <div class="setup-header">
-                        <h2 class="setup-title">Welcome to MediaSage</h2>
+                        <h2 class="setup-title">Welcome to CrateMind</h2>
                         <p class="setup-subtitle">Let's get you set up. This should only take a minute.</p>
                     </div>
 
@@ -55,41 +56,42 @@
                         <div class="setup-warning-icon" aria-hidden="true">!</div>
                         <div class="setup-warning-text">
                             <strong>Data directory is not writable</strong>
-                            <p>MediaSage cannot write to its data directory. This is usually a Docker volume permissions issue.</p>
+                            <p>CrateMind cannot write to its data directory. This is usually a Docker volume permissions issue.</p>
                             <p id="setup-data-fix" class="setup-warning-fix"></p>
                         </div>
                     </div>
 
-                    <!-- Step 1: Plex -->
+                    <!-- Step 1: Gerbera -->
                     <div class="setup-step" id="setup-step-plex">
                         <div class="setup-step-header">
                             <span class="setup-step-number">1</span>
                             <div class="setup-step-title">
-                                <h3>Connect to Plex</h3>
+                                <h3>Gerbera konfigurieren</h3>
                                 <span class="setup-step-status" id="setup-plex-status"></span>
                             </div>
                         </div>
                         <div class="setup-step-body" id="setup-plex-body">
                             <div class="setup-step-form" id="setup-plex-form">
                                 <div class="form-group">
-                                    <label for="setup-plex-url">Plex Server URL</label>
-                                    <input type="text" id="setup-plex-url" placeholder="http://your-plex-server:32400">
+                                    <label for="setup-plex-url">Datenbank-Pfad</label>
+                                    <div class="input-with-browse">
+                                        <input type="text" id="setup-plex-url" placeholder="/var/lib/gerbera/gerbera.db">
+                                        <button type="button" class="btn-browse" data-target="setup-plex-url" data-mode="file" title="Durchsuchen">&#128193;</button>
+                                    </div>
                                 </div>
                                 <div class="form-group">
-                                    <label for="setup-plex-token">Plex Token</label>
-                                    <input type="password" id="setup-plex-token" placeholder="Your Plex token">
-                                    <p class="setup-field-hint">Find your token: <a href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/" target="_blank" rel="noopener">Plex support article</a></p>
-                                </div>
-                                <div class="form-group">
-                                    <label for="setup-plex-library">Music Library</label>
-                                    <input type="text" id="setup-plex-library" value="Music" placeholder="Music library name">
+                                    <label for="setup-plex-library">Playlist-Verzeichnis</label>
+                                    <div class="input-with-browse">
+                                        <input type="text" id="setup-plex-library" placeholder="/var/lib/gerbera/playlists">
+                                        <button type="button" class="btn-browse" data-target="setup-plex-library" data-mode="dir" title="Durchsuchen">&#128193;</button>
+                                    </div>
                                 </div>
                                 <div id="setup-plex-error" class="setup-inline-error hidden" role="alert"></div>
-                                <button id="setup-plex-btn" class="btn btn-primary">Connect</button>
+                                <button id="setup-plex-btn" class="btn btn-primary">Speichern</button>
                             </div>
                             <div class="setup-step-done hidden" id="setup-plex-done">
                                 <span class="setup-done-icon" aria-hidden="true">&#10003;</span>
-                                <span class="setup-done-text" id="setup-plex-done-text">Connected</span>
+                                <span class="setup-done-text" id="setup-plex-done-text">Konfiguriert</span>
                             </div>
                         </div>
                     </div>
@@ -208,6 +210,13 @@
                             <div class="home-card-text">
                                 <div class="home-card-title">Recommend Album</div>
                                 <div class="home-card-desc">Find the perfect album for the moment</div>
+                            </div>
+                        </button>
+                        <button class="home-card" id="favorites-mix-btn">
+                            <div class="home-card-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg></div>
+                            <div class="home-card-text">
+                                <div class="home-card-title">Favorites Mix</div>
+                                <div class="home-card-desc">Deine Lieblingslieder + passende Neuentdeckungen</div>
                             </div>
                         </button>
                     </div>
@@ -418,7 +427,7 @@
                                 </div>
                                 <div id="playlist-picker-container" class="playlist-picker-container hidden">
                                     <select id="playlist-picker" class="playlist-picker-select" aria-label="Select playlist to update">
-                                        <option value="__scratch__">MediaSage - Now Playing</option>
+                                        <option value="__scratch__">CrateMind - Now Playing</option>
                                     </select>
                                 </div>
                                 <div id="narrative-box" class="narrative-box hidden"></div>
@@ -640,22 +649,24 @@
                 <h2>Settings</h2>
 
                 <section class="settings-section">
-                    <h3>Plex Connection</h3>
+                    <h3>Gerbera</h3>
                     <div class="status-indicator" id="plex-status">
                         <span class="status-dot"></span>
-                        <span class="status-text">Not connected</span>
+                        <span class="status-text">Not configured</span>
                     </div>
                     <div class="form-group">
-                        <label for="plex-url">Plex Server URL</label>
-                        <input type="text" id="plex-url" placeholder="http://your-plex-server:32400">
+                        <label for="gerbera-db-path">Datenbank-Pfad</label>
+                        <div class="input-with-browse">
+                            <input type="text" id="gerbera-db-path" placeholder="/var/lib/gerbera/gerbera.db">
+                            <button type="button" class="btn-browse" data-target="gerbera-db-path" data-mode="file" title="Durchsuchen">&#128193;</button>
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label for="plex-token">Plex Token</label>
-                        <input type="password" id="plex-token" placeholder="Your Plex token">
-                    </div>
-                    <div class="form-group">
-                        <label for="music-library">Music Library</label>
-                        <input type="text" id="music-library" value="Music" placeholder="Music library name">
+                        <label for="gerbera-playlist-output-dir">Playlist-Verzeichnis</label>
+                        <div class="input-with-browse">
+                            <input type="text" id="gerbera-playlist-output-dir" placeholder="/var/lib/gerbera/playlists">
+                            <button type="button" class="btn-browse" data-target="gerbera-playlist-output-dir" data-mode="dir" title="Durchsuchen">&#128193;</button>
+                        </div>
                     </div>
                 </section>
 
@@ -759,7 +770,73 @@
                     <div id="library-stats"></div>
                 </section>
             </div>
+          <!-- Library View -->
+          <div id="library-view" class="view">
+            <div class="view-header">
+              <h1>Library</h1>
+              <p class="view-subtitle">Favorisiere Künstler und Alben für deinen Mix</p>
+            </div>
+
+            <!-- Tab switcher -->
+            <div class="library-tabs" role="tablist">
+              <button class="library-tab active" id="lib-tab-artists" role="tab" aria-selected="true" data-tab="artists">
+                Künstler
+              </button>
+              <button class="library-tab" id="lib-tab-albums" role="tab" aria-selected="false" data-tab="albums">
+                Alben
+              </button>
+            </div>
+
+            <!-- Controls -->
+            <div class="library-controls">
+              <div class="library-search-wrap">
+                <svg class="library-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="lib-search" class="library-search" placeholder="Suchen…" autocomplete="off">
+              </div>
+              <label class="lib-toggle-label">
+                <input type="checkbox" id="lib-filter-new" class="lib-toggle-input">
+                <span class="lib-toggle-track"></span>
+                <span class="lib-toggle-text">Nur neue</span>
+              </label>
+              <label class="lib-toggle-label">
+                <input type="checkbox" id="lib-filter-favs" class="lib-toggle-input">
+                <span class="lib-toggle-track"></span>
+                <span class="lib-toggle-text">Nur Favoriten</span>
+              </label>
+            </div>
+
+            <!-- Loading state -->
+            <div id="lib-loading" class="lib-loading hidden">
+              <div class="spinner"></div>
+              <span>Bibliothek wird geladen…</span>
+            </div>
+
+            <!-- Card list -->
+            <div id="lib-list" class="lib-list" role="list"></div>
+
+            <!-- Footer -->
+            <div class="lib-footer">
+              <span id="lib-count"></span>
+              <span id="lib-fav-count" class="lib-fav-count"></span>
+            </div>
+          </div>
         </main>
+
+        <!-- File Browser Modal -->
+        <div id="file-browser-overlay" class="file-browser-overlay hidden" role="dialog" aria-modal="true" aria-label="Datei-Browser">
+            <div class="file-browser-modal">
+                <div class="file-browser-header">
+                    <button id="file-browser-up" class="file-browser-up" title="Eine Ebene höher" disabled>&#8593;</button>
+                    <span id="file-browser-path" class="file-browser-current-path">/</span>
+                    <button id="file-browser-close" class="modal-close" aria-label="Schließen">&#10005;</button>
+                </div>
+                <div id="file-browser-list" class="file-browser-list"></div>
+                <div class="file-browser-footer">
+                    <span id="file-browser-selection" class="file-browser-selection"></span>
+                    <button id="file-browser-select-btn" class="btn btn-primary btn-sm" disabled>Auswählen</button>
+                </div>
+            </div>
+        </div>
 
         <!-- Sync Progress Modal (global – blocks UI for first-time and upgrade syncs) -->
         <div id="sync-modal" class="sync-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sync-modal-title">
@@ -890,7 +967,7 @@
         <!-- Footer -->
         <footer class="app-footer app-footer--loading">
             <div class="footer-left">
-                <a href="https://github.com/ecwilsonaz/mediasage" target="_blank" rel="noopener" class="footer-brand">MediaSage <span id="footer-version"></span></a>
+                <a href="https://github.com/ecwilsonaz/mediasage" target="_blank" rel="noopener" class="footer-brand">CrateMind <span id="footer-version"></span></a>
                 <span class="footer-separator">·</span>
                 <span id="footer-model" class="footer-model">--</span>
             </div>
