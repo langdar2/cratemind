@@ -237,7 +237,7 @@ body {
     border-radius: var(--radius-md);
     padding: 4px;
     z-index: 100;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 24px rgba(109, 40, 217, 0.12);
 }
 
 .nav-dropdown.open .nav-dropdown-menu {
@@ -1019,7 +1019,7 @@ textarea {
 }
 
 .narrative-text {
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--text-secondary);
     font-size: 14px;
     line-height: 1.5;
     margin: 0;
@@ -1057,7 +1057,7 @@ textarea {
     grid-area: header;
     min-width: 0;
     padding-bottom: var(--spacing-md);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--border);
 }
 
 .results-sidebar {
@@ -1458,7 +1458,7 @@ input[type="number"]:focus:not(:focus-visible) {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(26, 26, 26, 0.95);
+    background: rgba(247, 245, 255, 0.92);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1514,7 +1514,7 @@ input[type="number"]:focus:not(:focus-visible) {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(26, 26, 26, 0.95);
+    background: rgba(247, 245, 255, 0.92);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1768,7 +1768,7 @@ input[type="number"]:focus:not(:focus-visible) {
 .file-browser-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(30, 27, 75, 0.4);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1840,7 +1840,7 @@ input[type="number"]:focus:not(:focus-visible) {
     user-select: none;
 }
 .file-browser-entry:hover { background: var(--bg-hover); }
-.file-browser-entry.selected { background: rgba(229, 160, 13, 0.15); }
+.file-browser-entry.selected { background: rgba(124, 58, 237, 0.1); }
 
 .file-browser-entry-icon {
     flex-shrink: 0;
@@ -1957,7 +1957,7 @@ input[type="number"]:focus:not(:focus-visible) {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(26, 26, 26, 0.98);
+    background: rgba(247, 245, 255, 0.95);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2226,7 +2226,7 @@ input[type="number"]:focus:not(:focus-visible) {
     border-radius: var(--radius-md);
     z-index: 100;
     overflow: hidden;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 12px rgba(109, 40, 217, 0.15);
 }
 
 .save-mode-option {
@@ -2304,7 +2304,7 @@ input[type="number"]:focus:not(:focus-visible) {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(26, 26, 26, 0.95);
+    background: rgba(247, 245, 255, 0.92);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2989,7 +2989,7 @@ body.no-scroll {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(26, 26, 26, 0.95);
+    background: rgba(247, 245, 255, 0.92);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -3077,7 +3077,7 @@ body.no-scroll {
     border-radius: var(--radius-md);
     object-fit: cover;
     background: var(--bg-tertiary);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 32px rgba(109, 40, 217, 0.15);
     margin-bottom: 24px;
 }
 
