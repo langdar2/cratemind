@@ -1,28 +1,27 @@
-# MediaSage for Plex
+# CrateMind
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docker Hub](https://img.shields.io/badge/docker-ecwilson%2Fmediasage-blue)](https://hub.docker.com/r/ecwilson/mediasage)
-[![GHCR](https://img.shields.io/badge/ghcr-ecwilsonaz%2Fmediasage-blue)](https://ghcr.io/ecwilsonaz/mediasage)
-[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
+[![GHCR](https://img.shields.io/badge/ghcr-langdar2%2Fcratemind-blue)](https://ghcr.io/langdar2/cratemind)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 **AI-powered playlists and album recommendations for Plex—using only music you actually own.**
 
-MediaSage is a self-hosted web app that creates playlists and recommends albums by combining LLM intelligence with your Plex library. Every suggestion is guaranteed playable because it only considers music you have.
+CrateMind is a self-hosted web app that creates playlists and recommends albums by combining LLM intelligence with your Plex library. Every suggestion is guaranteed playable because it only considers music you have.
 
 *Sample Generated Playlist:*
-![MediaSage Screenshot](docs/images/screenshot-playlist.png)
+![CrateMind Screenshot](docs/images/screenshot-playlist.png)
 
 *Sample Generated Album Recommendation:*
-![MediaSage Screenshot](docs/images/screenshot-album.png)
+![CrateMind Screenshot](docs/images/screenshot-album.png)
 
 *Home Screen:*
-![MediaSage Screenshot](docs/images/screenshot-home.png)
+![CrateMind Screenshot](docs/images/screenshot-home.png)
 
 *Playlist Flow:*
-![MediaSage Screenshot](docs/images/screenshot-playlist-start.png)
+![CrateMind Screenshot](docs/images/screenshot-playlist-start.png)
 
 *Album Flow:*
-![MediaSage Screenshot](docs/images/screenshot-album-start.png)
+![CrateMind Screenshot](docs/images/screenshot-album-start.png)
 
 ---
 
@@ -30,11 +29,11 @@ MediaSage is a self-hosted web app that creates playlists and recommends albums 
 
 ```bash
 docker run -d \
-  --name mediasage \
+  --name cratemind \
   -p 5765:5765 \
-  -v mediasage-data:/app/data \
+  -v cratemind-data:/app/data \
   --restart unless-stopped \
-  ghcr.io/ecwilsonaz/mediasage:latest
+  ghcr.io/langdar2/cratemind:latest
 ```
 
 Open **http://localhost:5765** — a setup wizard walks you through connecting Plex, choosing an AI provider, and syncing your library.
@@ -47,7 +46,7 @@ You can also pass credentials as environment variables to skip the wizard. See [
 
 ## Contents
 
-- [Why MediaSage?](#why-mediasage)
+- [Why CrateMind?](#why-cratemind)
 - [Features](#features)
 - [Installation](#installation)
 - [Configuration](#configuration)
@@ -57,7 +56,7 @@ You can also pass credentials as environment variables to skip the wizard. See [
 
 ---
 
-## Why MediaSage?
+## Why CrateMind?
 
 **Plex users with personal music libraries have few good options for AI playlists.**
 
@@ -65,9 +64,9 @@ Plexamp's built-in Sonic Sage used ChatGPT to generate playlists, but it was des
 
 When [Tidal integration ended in October 2024](https://forums.plex.tv/t/tidal-integration-with-plex-ending-october-28-2024/885728), Sonic Sage lost its foundation. Generic tools like ChatGPT have the same problem: they recommend from an infinite catalog with no awareness of what you actually own.
 
-**MediaSage inverts the approach:**
+**CrateMind inverts the approach:**
 
-| Filter-Last (Sonic Sage, ChatGPT) | Filter-First (MediaSage) |
+| Filter-Last (Sonic Sage, ChatGPT) | Filter-First (CrateMind) |
 |-----------------------------------|-------------------------|
 | AI recommends from infinite catalog | AI only sees your library |
 | Hide missing tracks after | No missing tracks possible |
@@ -112,7 +111,7 @@ Real-time track counts show exactly how your filters narrow results.
 
 ### Local Library Cache
 
-MediaSage syncs your Plex library to a local SQLite database. After a one-time sync (~2 min for 18,000 tracks), all library operations—filtering, counting, sending to AI—happen locally in milliseconds instead of waiting on Plex.
+CrateMind syncs your Plex library to a local SQLite database. After a one-time sync (~2 min for 18,000 tracks), all library operations—filtering, counting, sending to AI—happen locally in milliseconds instead of waiting on Plex.
 
 - **Setup wizard** walks you through first-run configuration and sync
 - **Footer status** shows track count and last sync time
@@ -131,11 +130,11 @@ Bring your own API key—or run locally:
 | **Ollama** ⚗️ | Varies | Free | Privacy, local inference |
 | **Custom** ⚗️ | Configurable | Free | Self-hosted, OpenAI-compatible APIs |
 
-⚗️ *Local LLM support is experimental. [Report issues](https://github.com/ecwilsonaz/mediasage/issues).*
+⚗️ *Local LLM support is experimental. [Report issues](https://github.com/langdar2/cratemind/issues).*
 
 > **Free option:** Google Gemini offers a free API tier that's more than enough for personal use — no credit card required. See the [Gemini free credit guide](docs/gemini-free-credit-guide.md) for setup instructions and details.
 
-Estimated cost displays before you generate. MediaSage auto-detects your provider based on which key you configure.
+Estimated cost displays before you generate. CrateMind auto-detects your provider based on which key you configure.
 
 ### Play and Save
 
@@ -155,9 +154,9 @@ Estimated cost displays before you generate. MediaSage auto-detects your provide
 ### Docker Compose (Recommended)
 
 ```bash
-mkdir mediasage && cd mediasage
-curl -O https://raw.githubusercontent.com/ecwilsonaz/mediasage/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/ecwilsonaz/mediasage/main/.env.example
+mkdir cratemind && cd cratemind
+curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/.env.example
 mv .env.example .env
 ```
 
@@ -185,7 +184,7 @@ docker compose up -d
 <summary><strong>Synology (Container Manager)</strong></summary>
 
 **GUI:**
-1. **Container Manager** → **Registry** → Search `ghcr.io/ecwilsonaz/mediasage`
+1. **Container Manager** → **Registry** → Search `ghcr.io/langdar2/cratemind`
 2. Download `latest` tag
 3. **Container** → **Create**
 4. Port: 5765 → 5765
@@ -193,14 +192,14 @@ docker compose up -d
 
 **Docker Compose:**
 ```bash
-mkdir -p /volume1/docker/mediasage && cd /volume1/docker/mediasage
-curl -O https://raw.githubusercontent.com/ecwilsonaz/mediasage/main/docker-compose.yml
-curl -O https://raw.githubusercontent.com/ecwilsonaz/mediasage/main/.env.example
+mkdir -p /volume1/docker/cratemind && cd /volume1/docker/cratemind
+curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/langdar2/cratemind/main/.env.example
 mv .env.example .env && nano .env
 ```
-Then in **Container Manager** → **Project** → **Create**, point to `/volume1/docker/mediasage`.
+Then in **Container Manager** → **Project** → **Create**, point to `/volume1/docker/cratemind`.
 
-**No Docker?** Some Synology models (especially ARM-based units) don't support Docker/Container Manager. See [Bare Metal](#bare-metal-no-docker) below for running MediaSage directly with Python.
+**No Docker?** Some Synology models (especially ARM-based units) don't support Docker/Container Manager. See [Bare Metal](#bare-metal-no-docker) below for running CrateMind directly with Python.
 
 </details>
 
@@ -208,7 +207,7 @@ Then in **Container Manager** → **Project** → **Create**, point to `/volume1
 <summary><strong>Unraid</strong></summary>
 
 1. **Docker** → **Add Container**
-2. Repository: `ghcr.io/ecwilsonaz/mediasage:latest`
+2. Repository: `ghcr.io/langdar2/cratemind:latest`
 3. Port: 5765 → 5765
 4. Add variables: `PLEX_URL`, `PLEX_TOKEN`, `GEMINI_API_KEY`
 
@@ -218,7 +217,7 @@ Then in **Container Manager** → **Project** → **Create**, point to `/volume1
 <summary><strong>TrueNAS SCALE</strong></summary>
 
 1. **Apps** → **Discover Apps** → **Custom App**
-2. Image: `ghcr.io/ecwilsonaz/mediasage`, Tag: `latest`
+2. Image: `ghcr.io/langdar2/cratemind`, Tag: `latest`
 3. Port: 5765
 4. Add environment variables
 
@@ -231,8 +230,8 @@ Then in **Container Manager** → **Project** → **Create**, point to `/volume1
 
 ```yaml
 services:
-  mediasage:
-    image: ghcr.io/ecwilsonaz/mediasage:latest
+  cratemind:
+    image: ghcr.io/langdar2/cratemind:latest
     ports:
       - "5765:5765"
     environment:
@@ -248,11 +247,11 @@ services:
 
 ### Bare Metal (No Docker)
 
-Docker isn't required. MediaSage is Python + FastAPI with no native dependencies, so it runs on any machine with Python 3.11+ — including ARM-based Synology NAS models, Raspberry Pis, or any Linux/macOS/Windows box.
+Docker isn't required. CrateMind is Python + FastAPI with no native dependencies, so it runs on any machine with Python 3.11+ — including ARM-based Synology NAS models, Raspberry Pis, or any Linux/macOS/Windows box.
 
 ```bash
-git clone https://github.com/ecwilsonaz/mediasage.git
-cd mediasage
+git clone https://github.com/langdar2/cratemind.git  # or your fork
+cd cratemind
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -277,20 +276,20 @@ Access at **http://your-machine-ip:5765**.
 <details>
 <summary><strong>Running as a background service (systemd)</strong></summary>
 
-To keep MediaSage running after you close your terminal, create a systemd service:
+To keep CrateMind running after you close your terminal, create a systemd service:
 
 ```ini
-# /etc/systemd/system/mediasage.service
+# /etc/systemd/system/cratemind.service
 [Unit]
-Description=MediaSage
+Description=CrateMind
 After=network.target
 
 [Service]
 Type=simple
 User=your-user
-WorkingDirectory=/path/to/mediasage
-EnvironmentFile=/path/to/mediasage/.env
-ExecStart=/path/to/mediasage/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 5765
+WorkingDirectory=/path/to/cratemind
+EnvironmentFile=/path/to/cratemind/.env
+ExecStart=/path/to/cratemind/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 5765
 Restart=on-failure
 
 [Install]
@@ -298,8 +297,8 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable mediasage
-sudo systemctl start mediasage
+sudo systemctl enable cratemind
+sudo systemctl start cratemind
 ```
 
 </details>
@@ -327,7 +326,7 @@ sudo systemctl start mediasage
 
 ### Web UI Configuration
 
-You can also configure MediaSage through the **Settings** page in the web UI. Settings entered there are saved to `config.user.yaml` and persist across restarts. Environment variables always take priority over UI-saved settings.
+You can also configure CrateMind through the **Settings** page in the web UI. Settings entered there are saved to `config.user.yaml` and persist across restarts. Environment variables always take priority over UI-saved settings.
 
 ### Advanced: config.yaml
 
@@ -349,7 +348,7 @@ defaults:
 
 ### Model Selection
 
-MediaSage uses a two-model strategy by default:
+CrateMind uses a two-model strategy by default:
 
 | Role | Purpose | Models Used |
 |------|---------|-------------|
@@ -360,7 +359,7 @@ This balances quality with cost. Enable `smart_generation: true` to use the anal
 
 ### Local LLM Setup (Experimental)
 
-Run MediaSage with local models for privacy and zero API costs.
+Run CrateMind with local models for privacy and zero API costs.
 
 <details>
 <summary><strong>Ollama</strong></summary>
@@ -370,7 +369,7 @@ Run MediaSage with local models for privacy and zero API costs.
    ollama pull llama3:8b
    ```
 
-2. Configure MediaSage via environment or Settings UI:
+2. Configure CrateMind via environment or Settings UI:
    ```bash
    LLM_PROVIDER=ollama
    OLLAMA_URL=http://localhost:11434
@@ -403,7 +402,7 @@ For LM Studio, text-generation-webui, vLLM, or any OpenAI-compatible server:
 
 ## How It Works
 
-MediaSage uses a **filter-first architecture** designed for large libraries (50,000+ tracks):
+CrateMind uses a **filter-first architecture** designed for large libraries (50,000+ tracks):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -441,8 +440,8 @@ This ensures every track exists in your library while keeping API costs manageab
 ### Local Setup
 
 ```bash
-git clone https://github.com/ecwilsonaz/mediasage.git
-cd mediasage
+git clone https://github.com/langdar2/cratemind.git  # or your fork
+cd cratemind
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
