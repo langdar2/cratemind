@@ -1,4 +1,4 @@
-"""MediaSage - Plex playlist generator powered by LLMs."""
+"""CrateMind - Plex playlist generator powered by LLMs."""
 
 from backend.version import get_version
 

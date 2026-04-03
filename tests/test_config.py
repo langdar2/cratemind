@@ -97,10 +97,10 @@ class TestLoadConfig:
 
         config_file = tmp_path / "config.yaml"
         config_data = {
-            "plex": {
-                "url": "http://plex.local:32400",
-                "token": "yaml-token",
-                "music_library": "My Music",
+            "gerbera": {
+                "db_path": "/mnt/gerbera/gerbera.db",
+                "playlist_output_dir": "/mnt/playlists",
+                "favorites_file": "my_favorites.yaml",
             },
             "llm": {
                 "provider": "anthropic",
@@ -114,9 +114,9 @@ class TestLoadConfig:
         with patch("backend.config.load_user_yaml_config", return_value={}):
             config = load_config(config_file)
 
-        assert config.plex.url == "http://plex.local:32400"
-        assert config.plex.token == "yaml-token"
-        assert config.plex.music_library == "My Music"
+        assert config.gerbera.db_path == "/mnt/gerbera/gerbera.db"
+        assert config.gerbera.playlist_output_dir == "/mnt/playlists"
+        assert config.gerbera.favorites_file == "my_favorites.yaml"
         assert config.llm.provider == "anthropic"
         assert config.llm.api_key == "sk-yaml-key"
         assert config.defaults.track_count == 40
@@ -130,21 +130,19 @@ class TestLoadConfig:
 
         config_file = tmp_path / "config.yaml"
         config_data = {
-            "plex": {"url": "http://yaml:32400", "token": "yaml-token"},
+            "gerbera": {"db_path": "/yaml/gerbera.db"},
             "llm": {"provider": "anthropic", "api_key": "yaml-key"},
         }
         config_file.write_text(yaml.dump(config_data))
 
-        monkeypatch.setenv("PLEX_URL", "http://env:32400")
-        monkeypatch.setenv("PLEX_TOKEN", "env-token")
+        monkeypatch.setenv("GERBERA_DB_PATH", "/env/gerbera.db")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
 
         # Patch load_user_yaml_config to return empty dict (ignore config.user.yaml)
         with patch("backend.config.load_user_yaml_config", return_value={}):
             config = load_config(config_file)
 
-        assert config.plex.url == "http://env:32400"
-        assert config.plex.token == "env-token"
+        assert config.gerbera.db_path == "/env/gerbera.db"
         assert config.llm.api_key == "env-key"
 
     def test_uses_correct_api_key_for_provider(self, tmp_path, monkeypatch):
@@ -242,7 +240,7 @@ class TestLoadConfig:
         with patch("backend.config.load_user_yaml_config", return_value={}):
             config = load_config(config_file)
 
-        assert config.plex.music_library == "Music"
+        assert config.gerbera.favorites_file == "favorites.yaml"
         assert config.llm.provider == "gemini"
         assert config.defaults.track_count == 25
 
@@ -250,12 +248,12 @@ class TestLoadConfig:
         """Secrets should not be exposed when printing config."""
         config_file = tmp_path / "config.yaml"
         config_data = {
-            "plex": {"url": "http://test:32400", "token": "secret-token"},
+            "gerbera": {"db_path": "/secret/path/gerbera.db"},
             "llm": {"provider": "anthropic", "api_key": "secret-api-key"},
         }
         config_file.write_text(yaml.dump(config_data))
 
-        for var in ["PLEX_URL", "PLEX_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+        for var in ["GERBERA_DB_PATH", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
                     "GEMINI_API_KEY", "LLM_PROVIDER", "LLM_MODEL_ANALYSIS", "LLM_MODEL_GENERATION"]:
             monkeypatch.delenv(var, raising=False)
 
@@ -263,9 +261,8 @@ class TestLoadConfig:
         with patch("backend.config.load_user_yaml_config", return_value={}):
             config = load_config(config_file)
 
-        # The token and api_key are stored, but we verify they exist
-        # (actual masking would be in a different layer if needed)
-        assert config.plex.token == "secret-token"
+        # Verify gerbera and LLM config loaded correctly
+        assert config.gerbera.db_path == "/secret/path/gerbera.db"
         assert config.llm.api_key == "secret-api-key"
 
 

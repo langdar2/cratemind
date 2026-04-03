@@ -1,4 +1,4 @@
-"""Pytest fixtures for MediaSage tests."""
+"""Pytest fixtures for CrateMind tests."""
 
 import pytest
 from unittest.mock import MagicMock

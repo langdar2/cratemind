@@ -1,10 +1,10 @@
-# MediaSage Development Guidelines
+# CrateMind Development Guidelines
 
 Auto-generated from feature plans. Last updated: 2026-02-04
 
 ## Project Overview
 
-MediaSage is a self-hosted web application that generates Plex music playlists using LLMs with library awareness. It uses a filter-first approach to ensure 100% of suggested tracks are playable.
+CrateMind is a self-hosted web application that generates Plex music playlists using LLMs with library awareness. It uses a filter-first approach to ensure 100% of suggested tracks are playable.
 
 ## Active Technologies
 - Python 3.11+ (backend), Vanilla JavaScript ES6+ (frontend) + FastAPI, python-plexapi, sqlite3 (stdlib), Pydantic (003-local-library-cache)

@@ -1,1 +1,1 @@
-"""MediaSage test suite."""
+"""CrateMind test suite."""

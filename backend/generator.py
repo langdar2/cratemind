@@ -14,7 +14,7 @@ from pathlib import Path
 from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
 from backend import library_cache
-from backend.favorites import Favorites, is_favorite
+from backend.favorites import Favorites, is_favorite, load_favorites
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,6 @@ def generate_playlist_stream(
 
         # Load favorites for prompt boost (no-op if file missing or not configured)
         try:
-            from backend.favorites import load_favorites
             _favs = load_favorites()
         except Exception:
             _favs = Favorites()

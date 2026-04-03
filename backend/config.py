@@ -305,10 +305,14 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
     gerbera_updates = {}
     llm_updates = {}
 
-    if "db_path" in updates and updates["db_path"]:
+    if updates.get("db_path"):
         gerbera_updates["db_path"] = updates["db_path"]
-    if "playlist_output_dir" in updates and updates["playlist_output_dir"]:
+    if updates.get("gerbera_db_path"):
+        gerbera_updates["db_path"] = updates["gerbera_db_path"]
+    if updates.get("playlist_output_dir"):
         gerbera_updates["playlist_output_dir"] = updates["playlist_output_dir"]
+    if updates.get("gerbera_playlist_output_dir"):
+        gerbera_updates["playlist_output_dir"] = updates["gerbera_playlist_output_dir"]
     if "favorites_file" in updates and updates["favorites_file"]:
         gerbera_updates["favorites_file"] = updates["favorites_file"]
     if "min_play_count" in updates and updates["min_play_count"] is not None:

@@ -14,7 +14,7 @@
 
 | Datei | Aktion | Verantwortung |
 |---|---|---|
-| `backend/gerbera_client.py` | Neu | Gerbera JSON-API: Auth, Library-Browse, Track-Daten |
+| `backend/gerbera_client.py` | Neu | Liest Tracks direkt aus Gerberas SQLite-Datenbank |
 | `backend/favorites.py` | Neu | `favorites.yaml` laden, `is_favorite()` bereitstellen |
 | `favorites.yaml` | Neu | Nutzerpflegbare Favoriten (Künstler, Alben) |
 | `backend/library_cache.py` | Anpassen | Schema + Sync für Gerbera (play_count, file_path statt user_rating) |
@@ -108,9 +108,7 @@ git commit -m "chore: fork mediasage as base for gerbera adaptation"
 
 ```python
 # In der Config-Klasse oder dem Settings-Dict — folge dem bestehenden Muster in config.py:
-GERBERA_URL: str = ""            # z.B. "http://192.168.1.x:49152"
-GERBERA_USERNAME: str = ""       # leer = keine Auth
-GERBERA_PASSWORD: str = ""
+GERBERA_DB_PATH: str = ""        # z.B. "/home/user/gerbera.db"
 PLAYLIST_OUTPUT_DIR: str = ""    # Gerbera-überwachtes Verzeichnis
 FAVORITES_FILE: str = "favorites.yaml"
 MIN_PLAY_COUNT: int = 0          # 0 = kein Filter
@@ -121,10 +119,8 @@ Entferne alle Referenzen auf `PLEX_URL`, `PLEX_TOKEN`, `PLEX_LIBRARY_SECTION`.
 - [ ] **Schritt 2: config.example.yaml aktualisieren**
 
 ```yaml
-# Gerbera-Verbindung
-GERBERA_URL: "http://192.168.1.x:49152"
-GERBERA_USERNAME: "admin"     # optional, leer lassen wenn keine Auth
-GERBERA_PASSWORD: ""          # optional
+# Gerbera-Datenbank (direkt auf dem gleichen Rechner)
+GERBERA_DB_PATH: "/home/user/gerbera.db"
 
 # Playlist-Output
 PLAYLIST_OUTPUT_DIR: "/media/music/playlists"
@@ -145,234 +141,161 @@ git commit -m "feat: replace plex config with gerbera config fields"
 
 ---
 
-## Task 3: `gerbera_client.py` — Auth und Session
+## Task 3: `gerbera_client.py` — SQLite-Reader
 
 **Files:**
 - Create: `backend/gerbera_client.py`
 - Create: `tests/test_gerbera_client.py`
 
-- [ ] **Schritt 1: Test schreiben (schlägt fehl)**
+Gerberas SQLite-Datenbank (`~/gerbera.db`) enthält alle Metadaten direkt:
+- `mt_cds_object`: id, dc_title (Titel), location (Dateipfad)
+- `mt_metadata`: Key-Value-Paare pro Track (`upnp:artist`, `upnp:album`, `upnp:genre`, `dc:date`)
+- `grb_cds_resource`: duration ("MM:SS"), Dateigröße etc.
+- `grb_playstatus`: playCount pro Track
+
+- [ ] **Schritt 1: Tests schreiben (schlagen fehl)**
 
 ```python
 # tests/test_gerbera_client.py
+import sqlite3
+import tempfile
+import os
 import pytest
-from unittest.mock import AsyncMock, patch
-from backend.gerbera_client import GerberaClient
+from backend.gerbera_client import GerberaTrack, read_tracks
 
-@pytest.mark.asyncio
-async def test_get_session_id():
-    client = GerberaClient(base_url="http://localhost:49152")
-    mock_response = {"sid": "abc123", "logged_in": False}
-    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value.json.return_value = mock_response
-        mock_get.return_value.raise_for_status = lambda: None
-        sid = await client._get_sid()
-    assert sid == "abc123"
 
-@pytest.mark.asyncio
-async def test_login():
-    client = GerberaClient(
-        base_url="http://localhost:49152",
-        username="admin",
-        password="secret"
+def _create_test_db(path: str) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE mt_cds_object (
+            id INTEGER PRIMARY KEY,
+            ref_id INTEGER DEFAULT NULL,
+            parent_id INTEGER NOT NULL DEFAULT 0,
+            upnp_class VARCHAR(80),
+            dc_title VARCHAR(255),
+            location TEXT
+        );
+        CREATE TABLE mt_metadata (
+            id INTEGER PRIMARY KEY,
+            item_id INTEGER NOT NULL,
+            property_name VARCHAR(255) NOT NULL,
+            property_value TEXT NOT NULL
+        );
+        CREATE TABLE grb_cds_resource (
+            item_id INTEGER NOT NULL,
+            res_id INTEGER NOT NULL,
+            handlerType INTEGER NOT NULL DEFAULT 0,
+            purpose INTEGER NOT NULL DEFAULT 0,
+            duration VARCHAR(255),
+            PRIMARY KEY(item_id, res_id)
+        );
+        CREATE TABLE grb_playstatus (
+            "group" VARCHAR(255) NOT NULL,
+            item_id INTEGER NOT NULL,
+            playCount INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY("group", item_id)
+        );
+    """)
+    # Insert one track
+    conn.execute("""
+        INSERT INTO mt_cds_object (id, ref_id, upnp_class, dc_title, location)
+        VALUES (1, NULL, 'object.item.audioItem.musicTrack',
+                'So What', '/music/miles_davis/kind_of_blue/01_so_what.flac')
+    """)
+    for name, value in [
+        ("upnp:artist", "Miles Davis"),
+        ("upnp:album", "Kind of Blue"),
+        ("upnp:genre", "Jazz"),
+        ("dc:date", "1959"),
+    ]:
+        conn.execute(
+            "INSERT INTO mt_metadata (item_id, property_name, property_value) VALUES (1, ?, ?)",
+            (name, value),
+        )
+    conn.execute(
+        "INSERT INTO grb_cds_resource (item_id, res_id, handlerType, purpose, duration) VALUES (1, 0, 0, 0, '09:22')"
     )
-    mock_sid_resp = {"sid": "abc123", "logged_in": False}
-    mock_login_resp = {"sid": "abc123", "logged_in": True}
-    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get, \
-         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
-        mock_get.return_value.json.return_value = mock_sid_resp
-        mock_get.return_value.raise_for_status = lambda: None
-        mock_post.return_value.json.return_value = mock_login_resp
-        mock_post.return_value.raise_for_status = lambda: None
-        await client.connect()
-    assert client.sid == "abc123"
-```
-
-- [ ] **Schritt 2: Test ausführen — muss fehlschlagen**
-
-```bash
-pytest tests/test_gerbera_client.py -v
-```
-Erwartet: `ImportError: cannot import name 'GerberaClient'`
-
-- [ ] **Schritt 3: `gerbera_client.py` implementieren (Auth-Teil)**
-
-```python
-# backend/gerbera_client.py
-import httpx
-from dataclasses import dataclass, field
-from typing import Optional
+    conn.execute(
+        "INSERT INTO grb_playstatus (\"group\", item_id, playCount) VALUES ('default', 1, 7)"
+    )
+    conn.commit()
+    conn.close()
 
 
-@dataclass
-class GerberaClient:
-    base_url: str
-    username: str = ""
-    password: str = ""
-    sid: Optional[str] = None
+def test_read_tracks_returns_correct_fields():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        _create_test_db(db_path)
+        tracks = read_tracks(db_path)
+        assert len(tracks) == 1
+        t = tracks[0]
+        assert t.gerbera_id == 1
+        assert t.title == "So What"
+        assert t.artist == "Miles Davis"
+        assert t.album == "Kind of Blue"
+        assert t.genre == "Jazz"
+        assert t.year == 1959
+        assert t.file_path == "/music/miles_davis/kind_of_blue/01_so_what.flac"
+        assert t.play_count == 7
+        assert t.duration_ms == 562000
+    finally:
+        os.unlink(db_path)
 
-    async def _get_sid(self) -> str:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{self.base_url}/api",
-                params={"req": "auth", "action": "get_sid"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            # Feldname aus Task 1 DevTools-Erkundung anpassen falls nötig
-            return data["sid"]
 
-    async def connect(self) -> None:
-        self.sid = await self._get_sid()
-        if self.username:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{self.base_url}/api",
-                    params={"req": "auth", "action": "login", "sid": self.sid},
-                    data={"username": self.username, "password": self.password},
-                )
-                resp.raise_for_status()
-```
+def test_read_tracks_skips_virtual_refs():
+    """Tracks mit ref_id (virtuelle Einträge) werden nicht zurückgegeben."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        _create_test_db(db_path)
+        conn = sqlite3.connect(db_path)
+        # Füge virtuellen Eintrag ein (ref_id gesetzt)
+        conn.execute("""
+            INSERT INTO mt_cds_object (id, ref_id, upnp_class, dc_title, location)
+            VALUES (2, 1, 'object.item.audioItem.musicTrack', 'So What (copy)', '/music/copy.flac')
+        """)
+        conn.commit()
+        conn.close()
+        tracks = read_tracks(db_path)
+        assert len(tracks) == 1  # virtueller Eintrag nicht dabei
+    finally:
+        os.unlink(db_path)
 
-- [ ] **Schritt 4: Tests ausführen — müssen bestehen**
 
-```bash
-pytest tests/test_gerbera_client.py -v
-```
-Erwartet: 2 PASSED
-
-- [ ] **Schritt 5: Commit**
-
-```bash
-git add backend/gerbera_client.py tests/test_gerbera_client.py
-git commit -m "feat: add gerbera_client auth and session management"
-```
-
----
-
-## Task 4: `gerbera_client.py` — Library-Browse und Track-Extraktion
-
-**Files:**
-- Modify: `backend/gerbera_client.py`
-- Modify: `tests/test_gerbera_client.py`
-
-> **Hinweis:** Die JSON-Feldnamen unten (`dc:title`, `upnp:artist` etc.) sind UPnP-typische Namen. Passe sie auf die tatsächlichen Feldnamen an, die du in Task 1 per DevTools ermittelt hast.
-
-- [ ] **Schritt 1: Tests schreiben**
-
-```python
-# Ergänze tests/test_gerbera_client.py
-
-from backend.gerbera_client import GerberaTrack
-
-@pytest.mark.asyncio
-async def test_get_items_in_container():
-    client = GerberaClient(base_url="http://localhost:49152")
-    client.sid = "abc123"
-
-    mock_response = {
-        "items": {
-            "item": [
-                {
-                    "id": "42",
-                    "dc:title": "So What",
-                    "upnp:artist": "Miles Davis",
-                    "upnp:album": "Kind of Blue",
-                    "upnp:genre": "Jazz",
-                    "dc:date": "1959",
-                    "res": "/media/music/miles_davis/kind_of_blue/01_so_what.flac",
-                    "res@duration": "0:09:22.000",
-                    "upnp:playbackCount": 7,
-                }
-            ],
-            "total_matches": 1,
-        }
-    }
-
-    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value.json.return_value = mock_response
-        mock_get.return_value.raise_for_status = lambda: None
-        tracks = await client.get_items(parent_id="1")
-
-    assert len(tracks) == 1
-    t = tracks[0]
-    assert t.title == "So What"
-    assert t.artist == "Miles Davis"
-    assert t.album == "Kind of Blue"
-    assert t.genre == "Jazz"
-    assert t.year == 1959
-    assert t.file_path == "/media/music/miles_davis/kind_of_blue/01_so_what.flac"
-    assert t.play_count == 7
-    assert t.gerbera_id == "42"
-
-@pytest.mark.asyncio
-async def test_get_all_tracks_recursive():
-    client = GerberaClient(base_url="http://localhost:49152")
-    client.sid = "abc123"
-
-    # Container-Antwort (kein Item, nur Sub-Container)
-    container_resp = {
-        "containers": {"container": [{"id": "10", "title": "Music"}]},
-        "items": {"item": [], "total_matches": 0},
-    }
-    # Items-Antwort im Sub-Container
-    items_resp = {
-        "containers": {"container": []},
-        "items": {
-            "item": [
-                {
-                    "id": "99",
-                    "dc:title": "The Mercy Seat",
-                    "upnp:artist": "Nick Cave",
-                    "upnp:album": "Tender Prey",
-                    "upnp:genre": "Rock",
-                    "dc:date": "1988",
-                    "res": "/media/music/nick_cave/tender_prey/07_mercy_seat.mp3",
-                    "res@duration": "0:06:53.000",
-                    "upnp:playbackCount": 12,
-                }
-            ],
-            "total_matches": 1,
-        },
-    }
-
-    call_count = 0
-
-    async def mock_api(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        m = AsyncMock()
-        m.raise_for_status = lambda: None
-        m.json.return_value = container_resp if call_count == 1 else items_resp
-        return m
-
-    with patch("httpx.AsyncClient.get", side_effect=mock_api):
-        tracks = await client.get_all_tracks()
-
-    assert len(tracks) == 1
-    assert tracks[0].title == "The Mercy Seat"
+def test_read_tracks_play_count_zero_when_unplayed():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        _create_test_db(db_path)
+        conn = sqlite3.connect(db_path)
+        conn.execute("DELETE FROM grb_playstatus")
+        conn.commit()
+        conn.close()
+        tracks = read_tracks(db_path)
+        assert tracks[0].play_count == 0
+    finally:
+        os.unlink(db_path)
 ```
 
 - [ ] **Schritt 2: Tests ausführen — müssen fehlschlagen**
 
 ```bash
-pytest tests/test_gerbera_client.py -v
+cd /Users/dirk.lange/projects/music && python -m pytest tests/test_gerbera_client.py -v
 ```
-Erwartet: FAIL (`GerberaTrack` nicht definiert, `get_items`/`get_all_tracks` fehlen)
+Erwartet: `ImportError: cannot import name 'GerberaTrack'`
 
-- [ ] **Schritt 3: Implementierung ergänzen**
+- [ ] **Schritt 3: `gerbera_client.py` implementieren**
 
 ```python
-# Ergänze backend/gerbera_client.py
-
-import re
-from dataclasses import dataclass, field
-from typing import Optional
+# backend/gerbera_client.py
+import sqlite3
+from dataclasses import dataclass
 
 
 @dataclass
 class GerberaTrack:
-    gerbera_id: str
+    gerbera_id: int
     title: str
     artist: str
     album: str
@@ -384,101 +307,82 @@ class GerberaTrack:
 
 
 def _parse_duration_ms(duration_str: str) -> int:
-    """'0:09:22.000' → 562000 ms"""
+    """'MM:SS' oder 'H:MM:SS' → Millisekunden"""
     if not duration_str:
         return 0
-    parts = duration_str.split(":")
+    parts = duration_str.strip().split(":")
     try:
-        hours, minutes, seconds = int(parts[0]), int(parts[1]), float(parts[2])
-        return int((hours * 3600 + minutes * 60 + seconds) * 1000)
-    except (IndexError, ValueError):
-        return 0
+        if len(parts) == 2:
+            minutes, seconds = int(parts[0]), float(parts[1])
+            return int((minutes * 60 + seconds) * 1000)
+        elif len(parts) == 3:
+            hours, minutes, seconds = int(parts[0]), int(parts[1]), float(parts[2])
+            return int((hours * 3600 + minutes * 60 + seconds) * 1000)
+    except (ValueError, IndexError):
+        pass
+    return 0
 
 
-# Ergänze in GerberaClient:
+def read_tracks(db_path: str) -> list[GerberaTrack]:
+    """Liest alle Audio-Tracks aus Gerberas SQLite-Datenbank."""
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("""
+        SELECT
+            o.id,
+            o.dc_title,
+            o.location,
+            r.duration,
+            COALESCE(SUM(ps.playCount), 0) AS play_count,
+            MAX(CASE WHEN m.property_name = 'upnp:artist' THEN m.property_value END) AS artist,
+            MAX(CASE WHEN m.property_name = 'upnp:album'  THEN m.property_value END) AS album,
+            MAX(CASE WHEN m.property_name = 'upnp:genre'  THEN m.property_value END) AS genre,
+            MAX(CASE WHEN m.property_name = 'dc:date'     THEN m.property_value END) AS year_str
+        FROM mt_cds_object o
+        LEFT JOIN mt_metadata       m  ON m.item_id  = o.id
+        LEFT JOIN grb_cds_resource  r  ON r.item_id  = o.id AND r.res_id = 0
+        LEFT JOIN grb_playstatus    ps ON ps.item_id = o.id
+        WHERE o.upnp_class = 'object.item.audioItem.musicTrack'
+          AND o.ref_id IS NULL
+        GROUP BY o.id
+    """)
 
-    async def get_items(self, parent_id: str) -> list[GerberaTrack]:
-        """Liefert alle Audio-Tracks in einem Container (nicht rekursiv)."""
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{self.base_url}/api",
-                params={
-                    "req": "items",
-                    "parent_id": parent_id,
-                    "start": 0,
-                    "count": 10000,
-                    "sid": self.sid,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
+    tracks = []
+    for row in cursor.fetchall():
+        year_str = row["year_str"] or "0"
+        try:
+            year = int(str(year_str)[:4])
+        except (ValueError, TypeError):
+            year = 0
 
-        tracks = []
-        for item in data.get("items", {}).get("item", []):
-            # Feldnamen ggf. aus Task-1-Erkundung anpassen:
-            year_raw = item.get("dc:date", "0")
-            try:
-                year = int(str(year_raw)[:4])
-            except (ValueError, TypeError):
-                year = 0
-
-            tracks.append(GerberaTrack(
-                gerbera_id=str(item.get("id", "")),
-                title=item.get("dc:title", ""),
-                artist=item.get("upnp:artist", ""),
-                album=item.get("upnp:album", ""),
-                genre=item.get("upnp:genre", ""),
-                year=year,
-                duration_ms=_parse_duration_ms(item.get("res@duration", "")),
-                file_path=item.get("res", ""),
-                play_count=int(item.get("upnp:playbackCount", 0)),
-            ))
-        return tracks
-
-    async def _get_subcontainer_ids(self, parent_id: str) -> list[str]:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"{self.base_url}/api",
-                params={"req": "containers", "parent_id": parent_id, "sid": self.sid},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        containers = data.get("containers", {}).get("container", [])
-        return [str(c["id"]) for c in containers]
-
-    async def get_all_tracks(self, root_id: str = "0") -> list[GerberaTrack]:
-        """Traversiert den gesamten Medienbaum und liefert alle Audio-Tracks."""
-        all_tracks: list[GerberaTrack] = []
-        queue = [root_id]
-        visited: set[str] = set()
-
-        while queue:
-            container_id = queue.pop()
-            if container_id in visited:
-                continue
-            visited.add(container_id)
-
-            tracks = await self.get_items(container_id)
-            all_tracks.extend(tracks)
-
-            sub_ids = await self._get_subcontainer_ids(container_id)
-            queue.extend(sub_ids)
-
-        return all_tracks
+        tracks.append(GerberaTrack(
+            gerbera_id=row["id"],
+            title=row["dc_title"] or "",
+            artist=row["artist"] or "",
+            album=row["album"] or "",
+            genre=row["genre"] or "",
+            year=year,
+            duration_ms=_parse_duration_ms(row["duration"] or ""),
+            file_path=row["location"] or "",
+            play_count=int(row["play_count"]),
+        ))
+    conn.close()
+    return tracks
 ```
 
 - [ ] **Schritt 4: Tests ausführen — müssen bestehen**
 
 ```bash
-pytest tests/test_gerbera_client.py -v
+cd /Users/dirk.lange/projects/music && python -m pytest tests/test_gerbera_client.py -v
 ```
-Erwartet: alle PASSED
+Erwartet: 3 PASSED
 
 - [ ] **Schritt 5: Commit**
 
 ```bash
+cd /Users/dirk.lange/projects/music
 git add backend/gerbera_client.py tests/test_gerbera_client.py
-git commit -m "feat: add gerbera library browsing and track extraction"
+git commit -m "feat: add gerbera_client sqlite reader for track metadata"
 ```
 
 ---
