@@ -45,7 +45,7 @@ def _parse_duration_ms(duration_str: str) -> int:
 
 def read_tracks(db_path: str) -> list[GerberaTrack]:
     """Read all audio tracks from Gerbera's SQLite database."""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
     conn.row_factory = sqlite3.Row
     try:
         cursor = conn.execute("""
