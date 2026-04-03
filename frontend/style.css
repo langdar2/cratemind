@@ -134,6 +134,7 @@ body {
     padding: var(--spacing-md) 0;
     border-bottom: 1px solid var(--border);
     margin-bottom: var(--spacing-lg);
+    box-shadow: 0 1px 4px rgba(109, 40, 217, 0.06);
 }
 
 .logo {
@@ -164,8 +165,9 @@ body {
 }
 
 .nav-btn.active {
-    color: var(--accent);
-    background: var(--bg-secondary);
+    color: #fff;
+    background: var(--accent);
+    border-radius: var(--radius-full);
 }
 
 .nav-btn--icon {
@@ -536,19 +538,19 @@ textarea,
 select {
     width: 100%;
     padding: var(--spacing-sm) var(--spacing-md);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+    border: 1.5px solid var(--accent-border);
     border-radius: var(--radius-md);
     color: var(--text-primary);
     font-size: var(--font-size-base);
     font-family: var(--font-family);
-    transition: border-color var(--transition-fast);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 select {
     appearance: none;
     -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%23a0a0a0' stroke-width='1.5' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%238b5cf6' stroke-width='1.5' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 12px center;
     padding-right: 36px;
@@ -559,9 +561,9 @@ input[type="text"]:focus,
 input[type="password"]:focus,
 textarea:focus,
 select:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: -1px;
+    outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
 }
 
 input[type="text"]:focus:not(:focus-visible),
@@ -607,12 +609,14 @@ textarea {
 }
 
 .btn-primary {
-    background: var(--accent);
-    color: var(--bg-primary);
+    background: linear-gradient(90deg, var(--accent), var(--accent-dark));
+    color: #fff;
+    box-shadow: 0 3px 10px rgba(109, 40, 217, 0.28);
 }
 
 .btn-primary:hover {
-    background: var(--accent-hover);
+    background: linear-gradient(90deg, var(--accent-dark), #5b21b6);
+    box-shadow: 0 4px 14px rgba(109, 40, 217, 0.36);
 }
 
 .btn-primary:focus-visible {
@@ -680,8 +684,10 @@ textarea {
 }
 
 .chip.selected {
-    background: var(--accent);
-    color: var(--bg-primary);
+    background: var(--accent-light);
+    color: var(--accent);
+    border-color: var(--accent-border);
+    border-width: 1.5px;
 }
 
 .chip.selected:focus-visible {
@@ -1269,12 +1275,14 @@ textarea {
     background: var(--bg-secondary);
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: background var(--transition-fast), border-left var(--transition-fast);
+    transition: background var(--transition-fast), border-left var(--transition-fast), box-shadow var(--transition-fast);
     border-left: 3px solid transparent;
+    box-shadow: 0 1px 4px rgba(109, 40, 217, 0.07);
 }
 
 .playlist-track:hover {
     background: var(--bg-tertiary);
+    box-shadow: 0 4px 16px rgba(109, 40, 217, 0.13);
 }
 
 .playlist-track.selected {
@@ -2516,17 +2524,17 @@ body.no-scroll {
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
     border-radius: var(--radius-md);
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--bg-hover);
+    background: var(--accent-border);
     border-radius: var(--radius-md);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-muted);
+    background: var(--accent-muted);
 }
 
 /* Responsive */
@@ -2945,9 +2953,9 @@ body.no-scroll {
 }
 
 .option-pill.selected {
-    background: var(--accent);
-    color: var(--bg-primary);
-    border-color: var(--accent);
+    background: var(--accent-light);
+    color: var(--accent);
+    border-color: var(--accent-border);
     font-weight: 600;
 }
 
