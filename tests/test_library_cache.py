@@ -317,3 +317,19 @@ def test_get_albums_with_stats_returns_sorted_by_track_count():
     finally:
         conn.close()
         os.unlink(db_path)
+
+
+def test_get_albums_with_stats_is_favorite_flag():
+    from backend.library_cache import get_albums_with_stats, toggle_favorite
+    conn, db_path = make_db_with_favorites()
+    try:
+        conn.execute(
+            "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, is_live) VALUES (1,'Track1','Radiohead','OK Computer','[]','/a.flac',0)"
+        )
+        conn.commit()
+        toggle_favorite("album", "Radiohead", album="OK Computer", conn=conn)
+        rows = get_albums_with_stats(conn=conn)
+        assert rows[0]["is_favorite"] is True
+    finally:
+        conn.close()
+        os.unlink(db_path)

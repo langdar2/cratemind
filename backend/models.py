@@ -901,5 +901,5 @@ class LibraryAlbumsResponse(BaseModel):
 
 class ToggleFavoriteRequest(BaseModel):
     type: Literal["artist", "album"]
-    artist: str
+    artist: str = Field(..., min_length=1)
     album: str = ""

@@ -581,7 +581,7 @@ def generate_favorites_playlist_stream(
 
         if not favs.artists and not favs.albums:
             yield emit("error", {
-                "message": "Keine Favoriten konfiguriert. Bitte erst Künstler/Alben in favorites.yaml eintragen."
+                "message": "Keine Favoriten konfiguriert. Bitte erst Künstler oder Alben im Library-Tab als Favoriten markieren."
             })
             return
 

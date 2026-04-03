@@ -1,3 +1,4 @@
+import sqlite3
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -17,7 +18,7 @@ def load_favorites() -> Favorites:
         artists = {r["artist"].lower() for r in rows if r["type"] == "artist"}
         albums = {(r["artist"].lower(), r["album"].lower()) for r in rows if r["type"] == "album"}
         return Favorites(artists=artists, albums=albums)
-    except Exception:
+    except sqlite3.OperationalError:
         return Favorites()
     finally:
         conn.close()
