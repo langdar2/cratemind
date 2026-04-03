@@ -295,10 +295,12 @@ def init_schema(conn: sqlite3.Connection) -> bool:
     conn.commit()
 
     # Incremental migration: add first_seen_at if missing (existing databases)
+    # Note: SQLite does not allow non-constant expressions (e.g. CURRENT_TIMESTAMP)
+    # as default values in ALTER TABLE — use NULL default and UPDATE separately.
     migration_applied = False
     try:
-        conn.execute("ALTER TABLE tracks ADD COLUMN first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-        conn.execute("UPDATE tracks SET first_seen_at = CURRENT_TIMESTAMP WHERE first_seen_at IS NULL")
+        conn.execute("ALTER TABLE tracks ADD COLUMN first_seen_at TIMESTAMP")
+        conn.execute("UPDATE tracks SET first_seen_at = datetime('now') WHERE first_seen_at IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_first_seen ON tracks(first_seen_at)")
         conn.commit()
         migration_applied = True
