@@ -93,6 +93,14 @@ def init_db(db_path: str) -> sqlite3.Connection:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_favorites_artist ON favorites(artist)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sync_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_sync_at TIMESTAMP,
+            track_count INTEGER DEFAULT 0
+        )
+    """)
+    conn.execute("INSERT OR IGNORE INTO sync_state (id) VALUES (1)")
     conn.commit()
     return conn
 
@@ -287,15 +295,17 @@ def init_schema(conn: sqlite3.Connection) -> bool:
     conn.commit()
 
     # Incremental migration: add first_seen_at if missing (existing databases)
+    migration_applied = False
     try:
         conn.execute("ALTER TABLE tracks ADD COLUMN first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         conn.execute("UPDATE tracks SET first_seen_at = CURRENT_TIMESTAMP WHERE first_seen_at IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_first_seen ON tracks(first_seen_at)")
         conn.commit()
-    except Exception:
+        migration_applied = True
+    except sqlite3.OperationalError:
         pass  # Column already exists — no action needed
 
-    return False
+    return migration_applied
 
 
 # Whether a migration was applied on startup (signals need for re-sync)
