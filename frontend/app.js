@@ -1,5 +1,5 @@
 /**
- * MediaSage - Frontend Application
+ * CrateMind - Frontend Application
  */
 
 // =============================================================================
@@ -163,6 +163,17 @@ const state = {
         status: null,
         syncPollInterval: null,
     },
+
+    // Library browser (Tasks 7-9)
+    library: {
+        artists: [],
+        albums: [],
+        tab: 'artists',
+        filterNew: false,
+        filterFavs: false,
+        search: '',
+        loading: false,
+    },
 };
 
 // =============================================================================
@@ -319,7 +330,7 @@ let currentAbortController = null;
 let pendingNavHash = null;  // stored when mid-flow modal intercepts navigation
 
 
-function generatePlaylistStream(request, onProgress, onComplete, onError) {
+function generatePlaylistStream(request, onProgress, onComplete, onError, url = '/api/generate/stream') {
     // Abort any previous in-flight request
     if (currentAbortController) {
         currentAbortController.abort();
@@ -350,7 +361,7 @@ function generatePlaylistStream(request, onProgress, onComplete, onError) {
     resetTimeout();
 
     // Use fetch with streaming for SSE (EventSource doesn't support POST)
-    fetch('/api/generate/stream', {
+    fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
@@ -403,16 +414,16 @@ function generatePlaylistStream(request, onProgress, onComplete, onError) {
                                 state.userRequest = data.user_request || '';
                                 // Initialize tracks array for batched receiving
                                 state.pendingTracks = [];
-                                console.log('[MediaSage] Narrative received:', state.playlistTitle);
+                                console.log('[CrateMind] Narrative received:', state.playlistTitle);
                             } else if (currentEvent === 'tracks') {
                                 // Accumulate track batches
                                 if (data.batch && Array.isArray(data.batch)) {
                                     state.pendingTracks = state.pendingTracks || [];
                                     state.pendingTracks.push(...data.batch);
-                                    console.log('[MediaSage] Track batch received, total:', state.pendingTracks.length);
+                                    console.log('[CrateMind] Track batch received, total:', state.pendingTracks.length);
                                 }
                             } else if (currentEvent === 'complete') {
-                                console.log('[MediaSage] Complete event received, pending tracks:', state.pendingTracks?.length || 0);
+                                console.log('[CrateMind] Complete event received, pending tracks:', state.pendingTracks?.length || 0);
                                 clearTimeoutHandler();
                                 completed = true;
                                 // Merge accumulated tracks into complete data
@@ -427,7 +438,7 @@ function generatePlaylistStream(request, onProgress, onComplete, onError) {
                                 onError(new Error(data.message));
                             }
                         } catch (e) {
-                            console.error('[MediaSage] Failed to parse SSE event:', currentEvent, e);
+                            console.error('[CrateMind] Failed to parse SSE event:', currentEvent, e);
                         }
                         currentEvent = null;
                         currentData = '';
@@ -437,11 +448,11 @@ function generatePlaylistStream(request, onProgress, onComplete, onError) {
                 if (done) {
                     clearTimeoutHandler();
                     if (buffer.trim().length > 0) {
-                        console.warn('[MediaSage] Stream ended with unparsed buffer:', buffer);
+                        console.warn('[CrateMind] Stream ended with unparsed buffer:', buffer);
                     }
                     // iOS Safari fallback: if stream ended without complete event but we have tracks
                     if (state.pendingTracks && state.pendingTracks.length > 0 && !completed) {
-                        console.warn('[MediaSage] Stream ended without complete event, synthesizing completion with', state.pendingTracks.length, 'tracks');
+                        console.warn('[CrateMind] Stream ended without complete event, synthesizing completion with', state.pendingTracks.length, 'tracks');
                         const syntheticComplete = {
                             tracks: state.pendingTracks,
                             track_count: state.pendingTracks.length,
@@ -532,6 +543,7 @@ const HASH_TO_VIEW = {
     'playlist-seed': 'create',
     'recommend-album': 'recommend',
     'settings': 'settings',
+    'library': 'library',
     'result': 'result',
     // Backward compat
     'make-playlist': 'create',
@@ -599,6 +611,8 @@ function navigateTo(view, mode) {
         initRecommendView();
     } else if (view === 'home') {
         renderHistoryFeed();
+    } else if (view === 'library') {
+        loadLibraryView();
     }
 }
 
@@ -997,7 +1011,8 @@ function updateView() {
     document.querySelectorAll('.nav-btn[data-nav]').forEach(btn => {
         const hash = btn.dataset.nav;
         const isActive = (hash === 'recommend-album' && state.view === 'recommend') ||
-                         (hash === 'settings' && state.view === 'settings');
+                         (hash === 'settings' && state.view === 'settings') ||
+                         (hash === 'library' && state.view === 'library');
         btn.classList.toggle('active', isActive);
         btn.setAttribute('aria-current', isActive ? 'true' : 'false');
     });
@@ -1350,7 +1365,7 @@ let filterPreviewController = null;
 let filterPreviewLoadingTimeout = null;
 
 async function updateFilterPreview() {
-    console.log('[MediaSage] updateFilterPreview called');
+    console.log('[CrateMind] updateFilterPreview called');
     const previewTracks = document.getElementById('preview-tracks');
     const previewCost = document.getElementById('preview-cost');
 
@@ -1381,7 +1396,7 @@ async function updateFilterPreview() {
             min_rating: state.minRating,
             exclude_live: state.excludeLive,
         };
-        console.log('[MediaSage] Filter preview request:', requestBody);
+        console.log('[CrateMind] Filter preview request:', requestBody);
 
         const response = await fetch('/api/filter/preview', {
             method: 'POST',
@@ -1395,7 +1410,7 @@ async function updateFilterPreview() {
         }
 
         const data = await response.json();
-        console.log('[MediaSage] Filter preview response:', data);
+        console.log('[CrateMind] Filter preview response:', data);
 
         // Clear loading timeout - response arrived fast
         clearTimeout(filterPreviewLoadingTimeout);
@@ -1413,7 +1428,7 @@ async function updateFilterPreview() {
 
         // Ignore abort errors - they're expected when cancelling
         if (error.name === 'AbortError') {
-            console.log('[MediaSage] Filter preview request cancelled');
+            console.log('[CrateMind] Filter preview request cancelled');
             return;
         }
         console.error('Filter preview error:', error);
@@ -1713,8 +1728,8 @@ function updateResultsFooter() {
 function updateSettings() {
     if (!state.config) return;
 
-    document.getElementById('plex-url').value = state.config.plex_url || '';
-    document.getElementById('music-library').value = state.config.music_library || 'Music';
+    document.getElementById('gerbera-db-path').value = state.config.gerbera_db_path || '';
+    document.getElementById('gerbera-playlist-output-dir').value = state.config.gerbera_playlist_output_dir || '';
     document.getElementById('llm-provider').value = state.config.llm_provider || 'gemini';
 
     // Show warning if provider is set by environment variable
@@ -1722,12 +1737,6 @@ function updateSettings() {
     if (providerEnvWarning) {
         providerEnvWarning.classList.toggle('hidden', !state.config.provider_from_env);
     }
-
-    // Update token/key placeholders to indicate if configured
-    const plexTokenInput = document.getElementById('plex-token');
-    plexTokenInput.placeholder = state.config.plex_token_set
-        ? '••••••••••••••••  (configured)'
-        : 'Your Plex token';
 
     const llmApiKeyInput = document.getElementById('llm-api-key');
     llmApiKeyInput.placeholder = state.config.llm_api_key_set
@@ -1755,7 +1764,7 @@ function updateSettings() {
     const plexStatus = document.getElementById('plex-status');
     plexStatus.classList.toggle('connected', state.config.plex_connected);
     plexStatus.querySelector('.status-text').textContent =
-        state.config.plex_connected ? 'Connected' : 'Not connected';
+        state.config.plex_connected ? 'Konfiguriert' : 'Nicht konfiguriert';
 
     const llmStatus = document.getElementById('llm-status');
     llmStatus.classList.toggle('connected', state.config.llm_configured);
@@ -2558,6 +2567,12 @@ function setupEventListeners() {
         navigateTo(view, mode);
     });
 
+    // Favorites Mix button
+    const favoritesMixBtn = document.getElementById('favorites-mix-btn');
+    if (favoritesMixBtn) {
+        favoritesMixBtn.addEventListener('click', handleFavoritesPlaylist);
+    }
+
     // Playlist prompt pills
     const playlistPillContainer = document.getElementById('playlist-prompt-pills');
     if (playlistPillContainer) {
@@ -2931,7 +2946,7 @@ function renderSearchResults(tracks) {
 async function selectSeedTrack(ratingKey, tracks) {
     // Check if services are configured before proceeding
     if (!state.config?.plex_connected) {
-        showError('Connect to Plex in Settings first');
+        showError('Bitte zuerst Gerbera in den Einstellungen konfigurieren');
         return;
     }
     if (!state.config?.llm_configured) {
@@ -3148,6 +3163,67 @@ async function handleGenerate() {
     );
 }
 
+function handleFavoritesPlaylist() {
+    if (!state.config?.plex_connected) {
+        showError('Bitte zuerst Gerbera in den Einstellungen konfigurieren');
+        return;
+    }
+    if (!state.config?.llm_configured) {
+        showError('Bitte zuerst einen KI-Anbieter in den Einstellungen konfigurieren');
+        return;
+    }
+
+    // Navigate to the create view and show progress immediately
+    state.mode = 'prompt';
+    state.step = 'filters';
+    navigateTo('create');
+
+    const steps = PLAYLIST_STEPS.map(s => ({ ...s }));
+    showStepLoading(steps);
+
+    generatePlaylistStream(
+        { track_count: state.trackCount || 30, max_tracks_to_ai: state.maxTracksToAI || 500 },
+        (data) => {
+            const mapped = PLAYLIST_STEP_MAP[data.step];
+            if (mapped) updateStepProgress(mapped);
+        },
+        (response) => {
+            updateStepProgress('__done__');
+
+            state.sessionTokens += response.token_count || 0;
+            state.sessionCost += response.estimated_cost || 0;
+
+            state.playlist = response.tracks;
+            state.tokenCount = state.sessionTokens;
+            state.estimatedCost = state.sessionCost;
+
+            if (response.playlist_title) state.playlistTitle = response.playlist_title;
+            if (response.narrative) state.narrative = response.narrative;
+            if (response.track_reasons) state.trackReasons = response.track_reasons;
+
+            state.playlistName = state.playlistTitle || 'Favoriten-Mix';
+            state.selectedTrackKey = null;
+            state.prompt = 'Favoriten-Mix';
+
+            state.step = 'results';
+            updateStep();
+            updatePlaylist();
+            window.scrollTo(0, 0);
+            hideStepLoading();
+
+            if (response.result_id) {
+                history.replaceState(null, '', `#result/${response.result_id}`);
+                markHistoryStale();
+            }
+        },
+        (error) => {
+            showError(error.message);
+            hideStepLoading();
+        },
+        '/api/generate/favorites'
+    );
+}
+
 function generatePlaylistName() {
     const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
@@ -3203,6 +3279,145 @@ async function handleSavePlaylist() {
     }
 }
 
+// =============================================================================
+// File Browser
+// =============================================================================
+
+const _fileBrowser = {
+    mode: 'all',       // 'file' | 'dir'
+    targetId: null,    // input element id to populate on select
+    selected: null,    // currently highlighted path
+    onSelect: null,    // optional callback(path)
+};
+
+function openFileBrowser(targetInputId, mode = 'all', onSelect = null) {
+    _fileBrowser.mode = mode;
+    _fileBrowser.targetId = targetInputId;
+    _fileBrowser.selected = null;
+    _fileBrowser.onSelect = onSelect;
+
+    // Start from current value of the target input, or '/'
+    const currentVal = document.getElementById(targetInputId)?.value?.trim();
+    let startPath = '/';
+    if (currentVal) {
+        // For file mode start from parent dir; for dir mode use the value directly
+        startPath = mode === 'file'
+            ? currentVal.substring(0, currentVal.lastIndexOf('/')) || '/'
+            : currentVal;
+    }
+
+    document.getElementById('file-browser-select-btn').disabled = true;
+    document.getElementById('file-browser-selection').textContent = '';
+    document.getElementById('file-browser-overlay').classList.remove('hidden');
+    _fileBrowserLoad(startPath);
+}
+
+function closeFileBrowser() {
+    document.getElementById('file-browser-overlay').classList.add('hidden');
+}
+
+async function _fileBrowserLoad(path) {
+    const list = document.getElementById('file-browser-list');
+    list.innerHTML = '<div class="file-browser-empty">Lade…</div>';
+    document.getElementById('file-browser-path').textContent = path;
+    document.getElementById('file-browser-up').disabled = path === '/';
+    _fileBrowser._currentPath = path;
+    _fileBrowser.selected = null;
+    document.getElementById('file-browser-select-btn').disabled = true;
+    document.getElementById('file-browser-selection').textContent = '';
+
+    try {
+        const params = new URLSearchParams({ path, mode: _fileBrowser.mode });
+        const data = await apiCall(`/browse?${params}`);
+
+        list.innerHTML = '';
+
+        // In dir mode: allow selecting the current directory itself
+        if (_fileBrowser.mode === 'dir') {
+            const selfEntry = document.createElement('div');
+            selfEntry.className = 'file-browser-entry selected';
+            selfEntry.innerHTML = `
+                <span class="file-browser-entry-icon">&#128193;</span>
+                <span class="file-browser-entry-name" style="font-style:italic">. (dieses Verzeichnis)</span>`;
+            selfEntry.addEventListener('click', () => {
+                list.querySelectorAll('.file-browser-entry').forEach(e => e.classList.remove('selected'));
+                selfEntry.classList.add('selected');
+                _fileBrowser.selected = path;
+                document.getElementById('file-browser-selection').textContent = path;
+                document.getElementById('file-browser-select-btn').disabled = false;
+            });
+            list.appendChild(selfEntry);
+            // Pre-select current dir
+            _fileBrowser.selected = path;
+            document.getElementById('file-browser-selection').textContent = path;
+            document.getElementById('file-browser-select-btn').disabled = false;
+        }
+
+        if (data.entries.length === 0 && _fileBrowser.mode !== 'dir') {
+            list.innerHTML += '<div class="file-browser-empty">Verzeichnis ist leer</div>';
+        }
+
+        for (const entry of data.entries) {
+            const el = document.createElement('div');
+            el.className = 'file-browser-entry' + (entry.is_dir ? ' is-dir' : '');
+            el.innerHTML = `
+                <span class="file-browser-entry-icon">${entry.is_dir ? '&#128193;' : '&#128441;'}</span>
+                <span class="file-browser-entry-name">${entry.name}</span>
+                ${entry.is_dir ? '<span class="file-browser-entry-arrow">&#8250;</span>' : ''}`;
+
+            el.addEventListener('click', () => {
+                if (entry.is_dir) {
+                    _fileBrowserLoad(entry.path);
+                } else {
+                    // File selected
+                    list.querySelectorAll('.file-browser-entry').forEach(e => e.classList.remove('selected'));
+                    el.classList.add('selected');
+                    _fileBrowser.selected = entry.path;
+                    document.getElementById('file-browser-selection').textContent = entry.path;
+                    document.getElementById('file-browser-select-btn').disabled = false;
+                }
+            });
+            list.appendChild(el);
+        }
+
+        // Wire up parent
+        document.getElementById('file-browser-up').onclick = () => {
+            if (data.parent) _fileBrowserLoad(data.parent);
+        };
+        document.getElementById('file-browser-up').disabled = !data.parent;
+
+    } catch (err) {
+        list.innerHTML = `<div class="file-browser-empty">Fehler: ${err.message}</div>`;
+    }
+}
+
+function _fileBrowserInitListeners() {
+    document.getElementById('file-browser-close').addEventListener('click', closeFileBrowser);
+    document.getElementById('file-browser-overlay').addEventListener('click', e => {
+        if (e.target === document.getElementById('file-browser-overlay')) closeFileBrowser();
+    });
+    document.getElementById('file-browser-select-btn').addEventListener('click', () => {
+        const path = _fileBrowser.selected;
+        if (!path) return;
+        if (_fileBrowser.targetId) {
+            const input = document.getElementById(_fileBrowser.targetId);
+            if (input) input.value = path;
+        }
+        if (_fileBrowser.onSelect) _fileBrowser.onSelect(path);
+        closeFileBrowser();
+    });
+
+    // Wire .btn-browse via delegation so it always works, regardless of
+    // render order or sub-element click targets
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('.btn-browse');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openFileBrowser(btn.dataset.target, btn.dataset.mode || 'all');
+    });
+}
+
 async function loadSettings() {
     try {
         state.config = await fetchConfig();
@@ -3248,9 +3463,8 @@ async function loadSettings() {
 async function handleSaveSettings() {
     const updates = {};
 
-    const plexUrl = document.getElementById('plex-url').value.trim();
-    const plexToken = document.getElementById('plex-token').value.trim();
-    const musicLibrary = document.getElementById('music-library').value.trim();
+    const gerberaDbPath = document.getElementById('gerbera-db-path').value.trim();
+    const gerberaPlaylistOutputDir = document.getElementById('gerbera-playlist-output-dir').value.trim();
     const llmProvider = document.getElementById('llm-provider').value;
     const llmApiKey = document.getElementById('llm-api-key').value.trim();
 
@@ -3265,9 +3479,8 @@ async function handleSaveSettings() {
     const customModel = document.getElementById('custom-model').value.trim();
     const customContextWindow = parseInt(document.getElementById('custom-context-window').value) || 32768;
 
-    if (plexUrl) updates.plex_url = plexUrl;
-    if (plexToken) updates.plex_token = plexToken;
-    if (musicLibrary) updates.music_library = musicLibrary;
+    if (gerberaDbPath) updates.gerbera_db_path = gerberaDbPath;
+    if (gerberaPlaylistOutputDir) updates.gerbera_playlist_output_dir = gerberaPlaylistOutputDir;
     if (llmProvider) updates.llm_provider = llmProvider;
 
     // Set provider-specific settings
@@ -3311,7 +3524,6 @@ async function handleSaveSettings() {
         showSuccess('Settings saved!');
 
         // Clear password fields after save
-        document.getElementById('plex-token').value = '';
         document.getElementById('llm-api-key').value = '';
 
         // Reload library stats
@@ -3562,16 +3774,16 @@ async function fetchAndPopulatePlaylists() {
             state.plexPlaylists = await fetchPlexPlaylists();
         } catch (error) {
             showError('Failed to load playlists: ' + error.message);
-            picker.innerHTML = '<option value="__scratch__">MediaSage - Now Playing</option>';
+            picker.innerHTML = '<option value="__scratch__">CrateMind - Now Playing</option>';
             return;
         }
     }
 
     // Rebuild picker options: fixed scratch option first, then server playlists
-    picker.innerHTML = '<option value="__scratch__">MediaSage - Now Playing</option>';
+    picker.innerHTML = '<option value="__scratch__">CrateMind - Now Playing</option>';
     for (const pl of state.plexPlaylists) {
         // Skip if it's the same as the scratch playlist title (avoid duplicate)
-        if (pl.title === 'MediaSage - Now Playing') continue;
+        if (pl.title === 'CrateMind - Now Playing') continue;
         const option = document.createElement('option');
         option.value = pl.rating_key;
         option.textContent = `${pl.title} (${pl.track_count} tracks)`;
@@ -3629,7 +3841,7 @@ function setSaveMode(mode) {
     }
 
     // Persist to localStorage (US3 — T017)
-    try { localStorage.setItem('mediasage-save-mode', mode); } catch (e) { /* private browsing */ }
+    try { localStorage.setItem('cratemind-save-mode', mode); } catch (e) { /* private browsing */ }
 }
 
 async function handleUpdatePlaylist() {
@@ -4789,7 +5001,7 @@ function setupRecEventListeners() {
     const familiarityPills = document.getElementById('rec-familiarity-pills');
     if (familiarityPills) {
         try {
-            const saved = localStorage.getItem('mediasage-familiarity-pref');
+            const saved = localStorage.getItem('cratemind-familiarity-pref');
             if (saved && ['any', 'comfort', 'rediscover', 'hidden_gems'].includes(saved)) {
                 state.rec.familiarityPref = saved;
                 familiarityPills.querySelectorAll('.chip').forEach(btn => {
@@ -4809,7 +5021,7 @@ function setupRecEventListeners() {
                 b.classList.toggle('selected', isSelected);
                 b.setAttribute('aria-checked', isSelected ? 'true' : 'false');
             });
-            try { localStorage.setItem('mediasage-familiarity-pref', state.rec.familiarityPref); } catch (e) { /* private browsing */ }
+            try { localStorage.setItem('cratemind-familiarity-pref', state.rec.familiarityPref); } catch (e) { /* private browsing */ }
         });
     }
 
@@ -5094,14 +5306,16 @@ function renderSetupState(status) {
         dataWarning.classList.add('hidden');
     }
 
-    // Step 1: Plex
+    // Step 1: Gerbera
     if (status.plex_connected) {
-        setStepDone('plex', `Connected to Plex (${status.music_libraries.length} music ${status.music_libraries.length === 1 ? 'library' : 'libraries'})`);
+        setStepDone('plex', 'Gerbera konfiguriert');
     } else {
         setStepForm('plex');
-        if (status.plex_from_env) {
-            const urlInput = document.getElementById('setup-plex-url');
-            if (urlInput && !urlInput.value) urlInput.value = '';
+        if (state.config) {
+            const dbInput = document.getElementById('setup-plex-url');
+            if (dbInput && !dbInput.value) dbInput.value = state.config.gerbera_db_path || '';
+            const dirInput = document.getElementById('setup-plex-library');
+            if (dirInput && !dirInput.value) dirInput.value = state.config.gerbera_playlist_output_dir || '';
         }
     }
 
@@ -5258,43 +5472,38 @@ function setupWizardEventListeners() {
     if (_setupListenersAttached) return;
     _setupListenersAttached = true;
 
-    // Plex validation
+    // Gerbera configuration
     document.getElementById('setup-plex-btn').addEventListener('click', async () => {
-        const url = document.getElementById('setup-plex-url').value.trim();
-        const token = document.getElementById('setup-plex-token').value.trim();
-        const library = document.getElementById('setup-plex-library').value.trim() || 'Music';
+        const dbPath = document.getElementById('setup-plex-url').value.trim();
+        const playlistDir = document.getElementById('setup-plex-library').value.trim();
 
-        if (!url || !token) {
-            setStepError('plex', 'URL and token are required');
+        if (!dbPath) {
+            setStepError('plex', 'Datenbank-Pfad ist erforderlich');
             return;
         }
 
         clearStepError('plex');
         const btn = document.getElementById('setup-plex-btn');
         btn.disabled = true;
-        btn.textContent = 'Connecting...';
+        btn.textContent = 'Speichern...';
 
         try {
-            const result = await validatePlex(url, token, library);
-            if (result.success) {
-                state.setup.status.plex_connected = true;
-                state.setup.status.music_libraries = result.music_libraries || [];
-                setStepDone('plex', result.server_name
-                    ? `Connected to ${result.server_name}` : 'Connected to Plex');
-                // Auto-trigger sync if AI is also done
-                if (state.setup.status.llm_configured && !state.setup.status.library_synced) {
-                    state.setup.status.is_syncing = true;
-                    triggerSetupSync();
-                }
-                renderSetupState(state.setup.status);
-            } else {
-                setStepError('plex', result.error || 'Connection failed');
+            const updates = { gerbera_db_path: dbPath };
+            if (playlistDir) updates.gerbera_playlist_output_dir = playlistDir;
+            state.config = await updateConfig(updates);
+            state.setup.status.plex_connected = true;
+            setStepDone('plex', 'Gerbera konfiguriert');
+            // Auto-trigger sync if AI is also done
+            if (state.setup.status.llm_configured && !state.setup.status.library_synced) {
+                state.setup.status.is_syncing = true;
+                triggerSetupSync();
             }
+            renderSetupState(state.setup.status);
         } catch (e) {
             setStepError('plex', e.message);
         } finally {
             btn.disabled = false;
-            btn.textContent = 'Connect';
+            btn.textContent = 'Speichern';
         }
     });
 
@@ -5371,6 +5580,107 @@ function setupWizardEventListeners() {
 
 
 // =============================================================================
+// Library View (Tasks 7-9)
+// =============================================================================
+
+async function loadLibraryView() {
+  if (state.library.artists.length > 0 || state.library.albums.length > 0) {
+    renderLibrary();
+    return;
+  }
+  state.library.loading = true;
+  document.getElementById('lib-loading').classList.remove('hidden');
+  document.getElementById('lib-list').innerHTML = '';
+
+  try {
+    const [artistsData, albumsData] = await Promise.all([
+      apiCall('/library/artists'),
+      apiCall('/library/albums'),
+    ]);
+    state.library.artists = artistsData.artists;
+    state.library.albums = albumsData.albums;
+  } catch (e) {
+    document.getElementById('lib-loading').textContent = 'Fehler beim Laden der Bibliothek.';
+    return;
+  } finally {
+    state.library.loading = false;
+    document.getElementById('lib-loading').classList.add('hidden');
+  }
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const tab = state.library.tab;
+  const items = tab === 'artists' ? state.library.artists : state.library.albums;
+  const search = state.library.search.toLowerCase();
+
+  const filtered = items.filter(item => {
+    const name = tab === 'artists' ? item.artist : `${item.artist} ${item.album}`;
+    if (search && !name.toLowerCase().includes(search)) return false;
+    if (state.library.filterNew && !item.is_new) return false;
+    if (state.library.filterFavs && !item.is_favorite) return false;
+    return true;
+  });
+
+  const list = document.getElementById('lib-list');
+  list.innerHTML = filtered.map(item => {
+    const key = tab === 'artists'
+      ? `artist|||${item.artist}`
+      : `album|||${item.artist}|||${item.album}`;
+    const title = tab === 'artists' ? item.artist : item.album;
+    const subtitle = tab === 'albums' ? `<div class="lib-card-subtitle">${escapeHtml(item.artist)}</div>` : '';
+    const newBadge = item.is_new ? '<span class="lib-badge-new">NEU</span>' : '';
+    const heartChar = item.is_favorite ? '♥' : '♡';
+    return `
+      <div class="lib-card ${item.is_favorite ? 'is-favorite' : ''}" data-key="${escapeHtml(key)}" role="listitem">
+        <button class="lib-heart" data-key="${escapeHtml(key)}" aria-label="Favorit umschalten">${heartChar}</button>
+        <div class="lib-card-body">
+          <div class="lib-card-title">${escapeHtml(title)}${newBadge}</div>
+          ${subtitle}
+        </div>
+        <span class="lib-track-count">${item.track_count}</span>
+      </div>`;
+  }).join('');
+
+  const total = filtered.length;
+  const favCount = filtered.filter(i => i.is_favorite).length;
+  document.getElementById('lib-count').textContent = `${total} ${tab === 'artists' ? 'Künstler' : 'Alben'}`;
+  document.getElementById('lib-fav-count').textContent = favCount > 0 ? `♥ ${favCount} Favorit${favCount !== 1 ? 'en' : ''}` : '';
+}
+
+async function handleLibraryHeartToggle(key) {
+  const parts = key.split('|||');
+  const type = parts[0];
+  const artist = parts[1];
+  const album = parts[2] || '';
+
+  const items = type === 'artist' ? state.library.artists : state.library.albums;
+  const item = items.find(i =>
+    type === 'artist'
+      ? i.artist === artist
+      : i.artist === artist && i.album === album
+  );
+  if (!item) return;
+
+  // Optimistic update
+  item.is_favorite = !item.is_favorite;
+  renderLibrary();
+
+  try {
+    const result = await apiCall('/favorites/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ type, artist, album }),
+    });
+    item.is_favorite = result.is_favorite;
+    renderLibrary();
+  } catch (e) {
+    // Revert on error
+    item.is_favorite = !item.is_favorite;
+    renderLibrary();
+  }
+}
+
+// =============================================================================
 // Initialization
 // =============================================================================
 
@@ -5399,7 +5709,48 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setupEventListeners();
     setupRecEventListeners();
+    _fileBrowserInitListeners();
     setupHistoryEventListeners();
+
+    // Library tab switching
+    document.getElementById('lib-tab-artists').addEventListener('click', () => {
+      state.library.tab = 'artists';
+      document.getElementById('lib-tab-artists').classList.add('active');
+      document.getElementById('lib-tab-artists').setAttribute('aria-selected', 'true');
+      document.getElementById('lib-tab-albums').classList.remove('active');
+      document.getElementById('lib-tab-albums').setAttribute('aria-selected', 'false');
+      renderLibrary();
+    });
+
+    document.getElementById('lib-tab-albums').addEventListener('click', () => {
+      state.library.tab = 'albums';
+      document.getElementById('lib-tab-albums').classList.add('active');
+      document.getElementById('lib-tab-albums').setAttribute('aria-selected', 'true');
+      document.getElementById('lib-tab-artists').classList.remove('active');
+      document.getElementById('lib-tab-artists').setAttribute('aria-selected', 'false');
+      renderLibrary();
+    });
+
+    document.getElementById('lib-search').addEventListener('input', e => {
+      state.library.search = e.target.value;
+      renderLibrary();
+    });
+
+    document.getElementById('lib-filter-new').addEventListener('change', e => {
+      state.library.filterNew = e.target.checked;
+      renderLibrary();
+    });
+
+    document.getElementById('lib-filter-favs').addEventListener('change', e => {
+      state.library.filterFavs = e.target.checked;
+      renderLibrary();
+    });
+
+    document.getElementById('lib-list').addEventListener('click', e => {
+      const btn = e.target.closest('.lib-heart');
+      if (!btn) return;
+      handleLibraryHeartToggle(btn.dataset.key);
+    });
     state.view = viewFromHash();
     state.mode = modeFromHash();
     if (!location.hash) {
@@ -5468,7 +5819,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Restore save mode from localStorage AFTER config loads (US3 — T017)
     let initialMode = 'new';
     try {
-        const savedMode = localStorage.getItem('mediasage-save-mode');
+        const savedMode = localStorage.getItem('cratemind-save-mode');
         if (savedMode === 'replace' || savedMode === 'append') {
             initialMode = savedMode;
         }
