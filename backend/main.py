@@ -74,6 +74,7 @@ from backend import library_cache
 from backend.gerbera_client import read_tracks
 from backend.library_cache import init_db, sync_tracks, DB_PATH as CACHE_DB_PATH
 from backend.generator import write_m3u
+from backend.als_recommender import recommender as _als_recommender
 from backend.llm_client import (
     TOKENS_PER_ALBUM,
     estimate_cost_for_model,
@@ -516,6 +517,16 @@ async def trigger_library_sync():
         count = await asyncio.to_thread(_do_sync)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+
+    # Retrain ALS model in background — non-blocking, safe to fail
+    def _train_als() -> None:
+        try:
+            all_tracks = library_cache.get_tracks_by_filters(limit=0)
+            _als_recommender.train(all_tracks)
+        except Exception as exc:
+            logger.warning("ALS training after sync failed: %s", exc)
+
+    threading.Thread(target=_train_als, daemon=True).start()
 
     return {"status": "ok", "tracks_synced": count}
 

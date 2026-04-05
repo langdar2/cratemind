@@ -15,6 +15,7 @@ from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
 from backend import library_cache
 from backend.favorites import Favorites, is_favorite, load_favorites
+from backend.als_recommender import recommender as _als_recommender
 
 logger = logging.getLogger(__name__)
 
@@ -377,11 +378,17 @@ def generate_playlist_stream(
             yield emit("error", {"message": "No tracks match the selected filters. Try broadening your selection."})
             return
 
-        # Apply artist diversity cap then play-count-weighted sampling
+        # Apply artist diversity cap, then rank by ALS relevance (falls back
+        # to play_count sort when the model is not yet trained).
         diverse_pool = _diversify_tracks(raw_pool, max_per_artist=6)
-        filtered_tracks = _weighted_sample(diverse_pool, max_tracks_to_ai)
+        seed_id = seed_track.rating_key if seed_track else None
+        filtered_tracks = _als_recommender.rank(
+            candidate_tracks=diverse_pool,
+            seed_track_id=seed_id,
+            n=max_tracks_to_ai,
+        )
 
-        logger.info("Pool: %d raw → %d after diversity → %d after weighted sample",
+        logger.info("Pool: %d raw → %d after diversity → %d after ALS rank",
                     len(raw_pool), len(diverse_pool), len(filtered_tracks))
 
         # Step 2: Report track count
@@ -436,7 +443,10 @@ def generate_playlist_stream(
         if _feedback_block:
             generation_parts.append(_feedback_block)
 
-        generation_parts.append(f"\nSelect {track_count} tracks from this library:\n{track_list}")
+        generation_parts.append(
+            f"\nThe tracks below are pre-ranked by relevance. "
+            f"Select and reorder {track_count} for best flow and variety:\n{track_list}"
+        )
 
         generation_prompt = "\n\n".join(generation_parts)
 
@@ -597,10 +607,10 @@ You will be given:
 1. A description of what the user wants (prompt, seed track dimensions, or both)
 2. A numbered list of tracks that are available in their library
 
-Your task is to select tracks that best match the user's request. For each track, include a brief reason (1 sentence) explaining why it fits.
+The tracks below are pre-ranked by relevance; your task is to select and reorder for best flow and variety. For each track, include a brief reason (1 sentence) explaining why it fits.
 
 Guidelines:
-- Select tracks that fit the mood, era, style, and other aspects of the request
+- Prefer tracks near the top of the list — they are already ranked by relevance to the user's taste and the seed track
 - Vary the selection - don't pick too many tracks from the same artist or album
 - Consider the flow of the playlist - how tracks will sound in sequence
 - If using a seed track, don't include the seed track itself in the results
