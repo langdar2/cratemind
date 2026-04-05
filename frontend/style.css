@@ -1314,6 +1314,42 @@ textarea {
     background: rgba(233, 92, 89, 0.1);
 }
 
+.track-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.track-thumb {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0.25;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    transition: opacity 0.15s, transform 0.1s;
+    line-height: 1;
+}
+
+.track-thumb:hover {
+    opacity: 0.65;
+    transform: scale(1.15);
+}
+
+.track-thumb.active {
+    opacity: 1;
+}
+
+.track-thumb-up.active {
+    color: var(--success);
+}
+
+.track-thumb-down.active {
+    color: var(--error);
+}
+
 
 /* Settings */
 .settings-section {

@@ -157,6 +157,9 @@ const state = {
         filterAnalysisPromise: null,
     },
 
+    // Track feedback: {gerbera_id: rating} where rating is 1 or -1
+    trackFeedback: {},
+
     // Setup wizard
     setup: {
         active: false,
@@ -250,6 +253,18 @@ async function apiCall(endpoint, options = {}) {
 
 async function fetchConfig() {
     return apiCall('/config');
+}
+
+async function loadTrackFeedback() {
+    try {
+        const data = await apiCall('/feedback/tracks');
+        state.trackFeedback = {};
+        for (const [id, rating] of Object.entries(data.feedback || {})) {
+            state.trackFeedback[parseInt(id, 10)] = rating;
+        }
+    } catch (e) {
+        console.warn('Failed to load track feedback:', e);
+    }
 }
 
 async function updateConfig(updates) {
@@ -653,6 +668,7 @@ async function loadSavedResult(resultId) {
             updateView();
             updateMode();
             updateStep();
+            await loadTrackFeedback();
             updatePlaylist();
         }
 
@@ -1650,8 +1666,18 @@ function updatePlaylist() {
                 <div class="track-title">${escapeHtml(track.title)}</div>
                 <div class="track-artist">${escapeHtml(track.artist)} - ${escapeHtml(track.album)}</div>
             </div>
-            <button class="track-remove" tabindex="0" data-rating-key="${escapeHtml(track.rating_key)}"
-                    aria-label="Remove ${escapeHtml(track.title)}">&times;</button>
+            <div class="track-actions">
+                <button class="track-thumb track-thumb-up${state.trackFeedback[parseInt(track.rating_key, 10)] === 1 ? ' active' : ''}"
+                        data-gerbera-id="${escapeHtml(String(track.rating_key))}"
+                        data-rating="1"
+                        aria-label="Thumbs up">👍</button>
+                <button class="track-thumb track-thumb-down${state.trackFeedback[parseInt(track.rating_key, 10)] === -1 ? ' active' : ''}"
+                        data-gerbera-id="${escapeHtml(String(track.rating_key))}"
+                        data-rating="-1"
+                        aria-label="Thumbs down">👎</button>
+                <button class="track-remove" tabindex="0" data-rating-key="${escapeHtml(track.rating_key)}"
+                        aria-label="Remove ${escapeHtml(track.title)}">&times;</button>
+            </div>
         </div>
     `).join('');
 
@@ -1659,6 +1685,7 @@ function updatePlaylist() {
     container.querySelectorAll('.playlist-track').forEach(trackEl => {
         trackEl.addEventListener('click', (e) => {
             if (e.target.closest('.track-remove')) return;
+            if (e.target.closest('.track-thumb')) return;
             if (isMobileView()) {
                 openBottomSheet(trackEl.dataset.ratingKey);
             } else {
@@ -1669,6 +1696,7 @@ function updatePlaylist() {
         // Keyboard: Enter/Space to select
         trackEl.addEventListener('keydown', (e) => {
             if (e.target.closest('.track-remove')) return;
+            if (e.target.closest('.track-thumb')) return;
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 if (isMobileView()) {
@@ -2693,26 +2721,69 @@ function setupEventListeners() {
         updateStep();
     });
 
-    // Remove track (with selection management)
-    document.getElementById('playlist-tracks').addEventListener('click', e => {
+    // Remove track (with selection management) + thumb feedback
+    document.getElementById('playlist-tracks').addEventListener('click', async e => {
+        // Remove button
         const removeBtn = e.target.closest('.track-remove');
-        if (!removeBtn) return;
-
-        const ratingKey = removeBtn.dataset.ratingKey;
-        const removedIndex = state.playlist.findIndex(t => t.rating_key === ratingKey);
-        state.playlist = state.playlist.filter(t => t.rating_key !== ratingKey);
-
-        // If removed track was selected, auto-select next or first
-        if (state.selectedTrackKey === ratingKey) {
-            if (state.playlist.length > 0) {
-                const nextIndex = Math.min(removedIndex, state.playlist.length - 1);
-                state.selectedTrackKey = state.playlist[nextIndex].rating_key;
-            } else {
-                state.selectedTrackKey = null;
+        if (removeBtn) {
+            const ratingKey = removeBtn.dataset.ratingKey;
+            const removedIndex = state.playlist.findIndex(t => t.rating_key === ratingKey);
+            state.playlist = state.playlist.filter(t => t.rating_key !== ratingKey);
+            if (state.selectedTrackKey === ratingKey) {
+                if (state.playlist.length > 0) {
+                    const nextIndex = Math.min(removedIndex, state.playlist.length - 1);
+                    state.selectedTrackKey = state.playlist[nextIndex].rating_key;
+                } else {
+                    state.selectedTrackKey = null;
+                }
             }
+            updatePlaylist();
+            return;
         }
 
+        // Thumb buttons
+        const thumbBtn = e.target.closest('.track-thumb');
+        if (!thumbBtn) return;
+
+        const gerberaId = parseInt(thumbBtn.dataset.gerberaId, 10);
+        const clickedRating = parseInt(thumbBtn.dataset.rating, 10);
+        const currentRating = state.trackFeedback[gerberaId] || 0;
+        const newRating = currentRating === clickedRating ? 0 : clickedRating;
+
+        const track = state.playlist.find(t => parseInt(t.rating_key, 10) === gerberaId);
+        if (!track) return;
+
+        // Optimistic UI update
+        const prevRating = state.trackFeedback[gerberaId] || 0;
+        if (newRating === 0) {
+            delete state.trackFeedback[gerberaId];
+        } else {
+            state.trackFeedback[gerberaId] = newRating;
+        }
         updatePlaylist();
+
+        try {
+            await apiCall('/feedback/track', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    gerbera_id: gerberaId,
+                    title: track.title,
+                    artist: track.artist,
+                    album: track.album,
+                    rating: newRating,
+                }),
+            });
+        } catch (err) {
+            // Revert on error
+            if (prevRating === 0) {
+                delete state.trackFeedback[gerberaId];
+            } else {
+                state.trackFeedback[gerberaId] = prevRating;
+            }
+            updatePlaylist();
+            console.error('Failed to save feedback:', err);
+        }
     });
 
     // Save playlist
@@ -3114,7 +3185,7 @@ async function handleGenerate() {
             if (mapped) updateStepProgress(mapped);
         },
         // onComplete
-        (response) => {
+        async (response) => {
             // Mark final step complete before hiding
             updateStepProgress('__done__');
 
@@ -3145,6 +3216,7 @@ async function handleGenerate() {
 
             state.step = 'results';
             updateStep();
+            await loadTrackFeedback();
             updatePlaylist();
             window.scrollTo(0, 0);
             hideStepLoading();
@@ -3187,7 +3259,7 @@ function handleFavoritesPlaylist() {
             const mapped = PLAYLIST_STEP_MAP[data.step];
             if (mapped) updateStepProgress(mapped);
         },
-        (response) => {
+        async (response) => {
             updateStepProgress('__done__');
 
             state.sessionTokens += response.token_count || 0;
@@ -3207,6 +3279,7 @@ function handleFavoritesPlaylist() {
 
             state.step = 'results';
             updateStep();
+            await loadTrackFeedback();
             updatePlaylist();
             window.scrollTo(0, 0);
             hideStepLoading();
