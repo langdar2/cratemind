@@ -903,3 +903,20 @@ class ToggleFavoriteRequest(BaseModel):
     type: Literal["artist", "album"]
     artist: str = Field(..., min_length=1)
     album: str = ""
+
+
+class TrackFeedbackRequest(BaseModel):
+    """Request to save or remove a track rating."""
+    gerbera_id: int
+    title: str
+    artist: str
+    album: str
+    rating: int  # 1, -1, or 0 (remove)
+
+
+class TrackFeedbackResponse(BaseModel):
+    ok: bool
+
+
+class TrackFeedbackListResponse(BaseModel):
+    feedback: dict[int, int]

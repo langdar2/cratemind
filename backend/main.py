@@ -62,6 +62,9 @@ from backend.models import (
     SyncProgress,
     SyncTriggerResponse,
     ToggleFavoriteRequest,
+    TrackFeedbackListResponse,
+    TrackFeedbackRequest,
+    TrackFeedbackResponse,
     UpdateConfigRequest,
     ValidateAIRequest,
     ValidateAIResponse,
@@ -578,6 +581,29 @@ async def toggle_favorite(request: ToggleFavoriteRequest) -> dict:
         library_cache.toggle_favorite, request.type, request.artist, request.album
     )
     return {"is_favorite": is_fav}
+
+
+@app.post("/api/feedback/track", response_model=TrackFeedbackResponse)
+async def save_track_feedback_endpoint(request: TrackFeedbackRequest) -> TrackFeedbackResponse:
+    """Save or remove a thumbs up/down rating for a track."""
+    if request.rating not in (1, -1, 0):
+        raise HTTPException(status_code=400, detail="rating must be 1, -1, or 0")
+    await asyncio.to_thread(
+        library_cache.save_track_feedback,
+        request.gerbera_id,
+        request.title,
+        request.artist,
+        request.album,
+        request.rating,
+    )
+    return TrackFeedbackResponse(ok=True)
+
+
+@app.get("/api/feedback/tracks", response_model=TrackFeedbackListResponse)
+async def get_track_feedback_endpoint() -> TrackFeedbackListResponse:
+    """Return all track ratings as {gerbera_id: rating}."""
+    rows = await asyncio.to_thread(library_cache.get_track_feedback)
+    return TrackFeedbackListResponse(feedback={r["gerbera_id"]: r["rating"] for r in rows})
 
 
 # =============================================================================
