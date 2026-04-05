@@ -89,6 +89,40 @@ def is_live_version(track) -> bool:
     )
 
 
+def _no_consecutive_artists(tracks: list[Track]) -> list[Track]:
+    """Reorder tracks so no two consecutive tracks share the same artist (best-effort)."""
+    import heapq
+    from collections import deque
+
+    artist_map: dict[str, deque] = {}
+    for t in tracks:
+        key = t.artist.lower()
+        artist_map.setdefault(key, deque()).append(t)
+
+    heap = [(-len(v), k) for k, v in artist_map.items()]
+    heapq.heapify(heap)
+
+    result: list[Track] = []
+    prev_key: str | None = None
+
+    while heap:
+        neg_cnt, key = heapq.heappop(heap)
+        if key == prev_key and heap:
+            neg_cnt2, key2 = heapq.heappop(heap)
+            result.append(artist_map[key2].popleft())
+            prev_key = key2
+            if artist_map[key2]:
+                heapq.heappush(heap, (-len(artist_map[key2]), key2))
+            heapq.heappush(heap, (neg_cnt, key))
+        else:
+            result.append(artist_map[key].popleft())
+            prev_key = key
+            if artist_map[key]:
+                heapq.heappush(heap, (-len(artist_map[key]), key))
+
+    return result
+
+
 def _diversify_tracks(tracks: list[Track], max_per_artist: int = 6) -> list[Track]:
     """Cap tracks per artist so the LLM prompt pool has broad variety."""
     counts: dict[str, int] = {}
@@ -428,8 +462,7 @@ def generate_playlist_stream(
         matched_tracks: list[Track] = []
         used_keys: set[str] = set()
         track_reasons: dict[str, str] = {}
-        # Scale max tracks per artist with playlist size: 3 for 25 tracks, 6 for 50, etc.
-        max_per_artist_final = max(2, track_count // 8)
+        max_per_artist_final = 3
         artist_final_counts: dict[str, int] = {}
 
         if seed_track:
@@ -456,6 +489,8 @@ def generate_playlist_stream(
                         if reason:
                             track_reasons[track.rating_key] = reason
                     break  # Match found; move on regardless of whether it was accepted
+
+        matched_tracks = _no_consecutive_artists(matched_tracks)
 
         # Step 7: Generate narrative
         yield emit("progress", {"step": "narrative", "message": "Writing playlist narrative..."})
@@ -750,7 +785,7 @@ def generate_favorites_playlist_stream(
         matched_tracks: list[Track] = []
         used_keys: set[str] = set()
         track_reasons: dict[str, str] = {}
-        max_per_artist_final = max(2, track_count // 8)
+        max_per_artist_final = 3
         artist_final_counts: dict[str, int] = {}
 
         for selection in track_selections:
@@ -771,6 +806,8 @@ def generate_favorites_playlist_stream(
                         if reason:
                             track_reasons[track.rating_key] = reason
                     break
+
+        matched_tracks = _no_consecutive_artists(matched_tracks)
 
         yield emit("progress", {"step": "narrative", "message": "Playlist-Titel wird erstellt…"})
 
