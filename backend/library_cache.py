@@ -290,6 +290,16 @@ def init_schema(conn: sqlite3.Connection) -> bool:
         );
 
         CREATE INDEX IF NOT EXISTS idx_favorites_artist ON favorites(artist);
+
+        -- Track feedback: user thumbs up/down per track
+        CREATE TABLE IF NOT EXISTS track_feedback (
+            gerbera_id  INTEGER PRIMARY KEY,
+            title       TEXT NOT NULL,
+            artist      TEXT NOT NULL,
+            album       TEXT NOT NULL,
+            rating      INTEGER NOT NULL CHECK (rating IN (1, -1)),
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     """)
 
     conn.commit()
@@ -1225,5 +1235,59 @@ def delete_result(result_id: str) -> bool:
         if deleted:
             logger.info("Deleted result %s", result_id)
         return deleted
+    finally:
+        conn.close()
+
+
+def save_track_feedback(
+    gerbera_id: int,
+    title: str,
+    artist: str,
+    album: str,
+    rating: int,
+) -> None:
+    """Save or delete a track rating.
+
+    rating=1 or -1: upsert the row.
+    rating=0: delete the row (toggle off).
+    """
+    conn = get_db_connection()
+    try:
+        if rating == 0:
+            conn.execute(
+                "DELETE FROM track_feedback WHERE gerbera_id = ?",
+                (gerbera_id,),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO track_feedback (gerbera_id, title, artist, album, rating)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(gerbera_id) DO UPDATE SET
+                       rating = excluded.rating,
+                       title  = excluded.title,
+                       artist = excluded.artist,
+                       album  = excluded.album,
+                       created_at = CURRENT_TIMESTAMP""",
+                (gerbera_id, title, artist, album, rating),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_track_feedback() -> list[dict]:
+    """Return all track ratings ordered by most recent first.
+
+    Each dict has keys: gerbera_id, title, artist, album, rating.
+    rating is 1 (liked) or -1 (disliked).
+    Returns empty list if no feedback exists.
+    """
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT gerbera_id, title, artist, album, rating "
+            "FROM track_feedback ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(row) for row in rows]
     finally:
         conn.close()
