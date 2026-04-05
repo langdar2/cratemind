@@ -3182,7 +3182,7 @@ function handleFavoritesPlaylist() {
     showStepLoading(steps);
 
     generatePlaylistStream(
-        { track_count: state.trackCount || 30, max_tracks_to_ai: state.maxTracksToAI || 500 },
+        { track_count: 50, max_tracks_to_ai: state.maxTracksToAI || 500 },
         (data) => {
             const mapped = PLAYLIST_STEP_MAP[data.step];
             if (mapped) updateStepProgress(mapped);
