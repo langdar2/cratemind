@@ -18,6 +18,38 @@ from backend.favorites import Favorites, is_favorite, load_favorites
 
 logger = logging.getLogger(__name__)
 
+
+def _build_feedback_prompt(rows: list[dict], limit: int = 20) -> str | None:
+    """Build a feedback context block for the LLM generation prompt.
+
+    rows: list of dicts with keys gerbera_id, title, artist, album, rating.
+          Expected in created_at DESC order (most recent first).
+    limit: max tracks per sentiment to include.
+    Returns None if rows is empty or all filtered.
+    """
+    if not rows:
+        return None
+
+    liked = [r for r in rows if r["rating"] == 1][:limit]
+    disliked = [r for r in rows if r["rating"] == -1][:limit]
+
+    if not liked and not disliked:
+        return None
+
+    parts = ["User feedback from previous playlists:"]
+    if liked:
+        track_list = ", ".join(f'"{r["title"]}" by {r["artist"]}' for r in liked)
+        parts.append(f"- Liked: {track_list}")
+    if disliked:
+        track_list = ", ".join(f'"{r["title"]}" by {r["artist"]}' for r in disliked)
+        parts.append(f"- Disliked: {track_list}")
+    parts.append(
+        "Prefer artists and styles similar to the liked tracks. "
+        "Avoid artists and styles similar to the disliked tracks."
+    )
+    return "\n".join(parts)
+
+
 # Fuzzy matching threshold (0-100 scale)
 FUZZ_THRESHOLD = 85
 
@@ -338,6 +370,13 @@ def generate_playlist_stream(
             for i, t in enumerate(filtered_tracks)
         )
 
+        # Load track feedback for prompt context
+        try:
+            _feedback_rows = library_cache.get_track_feedback()
+            _feedback_block = _build_feedback_prompt(_feedback_rows)
+        except Exception:
+            _feedback_block = None
+
         # Build the generation prompt
         generation_parts = []
 
@@ -359,6 +398,9 @@ def generate_playlist_stream(
             answered = [a for a in refinement_answers if a]
             if answered:
                 generation_parts.append(f"User preferences: {', '.join(answered)}")
+
+        if _feedback_block:
+            generation_parts.append(_feedback_block)
 
         generation_parts.append(f"\nSelect {track_count} tracks from this library:\n{track_list}")
 
@@ -657,11 +699,20 @@ def generate_favorites_playlist_stream(
                 f"Genre: {genre_str}, Plays: {track.get('play_count', 0)}){tag}"
             )
 
+        # Load track feedback for prompt context
+        try:
+            _feedback_rows = library_cache.get_track_feedback()
+            _feedback_block = _build_feedback_prompt(_feedback_rows)
+        except Exception:
+            _feedback_block = None
+
         n_fav = round(track_count * 0.7)
         n_new = track_count - n_fav
+        _feedback_section = f"\n\n{_feedback_block}" if _feedback_block else ""
         generation_prompt = (
             f"Select {track_count} tracks: approximately {n_fav} from [FAVORITE] tracks "
-            f"and approximately {n_new} from [NEW] tracks.\n\n"
+            f"and approximately {n_new} from [NEW] tracks."
+            f"{_feedback_section}\n\n"
             + "\n".join(track_lines)
         )
 
