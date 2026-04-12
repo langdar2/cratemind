@@ -405,6 +405,36 @@ class TestNarrativeGeneration:
 
         assert narrative == "Fallback description used"
 
+    def test_generate_narrative_uses_up_to_25_tracks(self):
+        """Narrative prompt should include up to 25 tracks, not just 15."""
+        from backend.generator import generate_narrative
+        from backend.llm_client import LLMResponse
+
+        track_selections = [
+            {"artist": f"Artist{i}", "title": f"Song{i}", "reason": f"Reason {i}"}
+            for i in range(20)
+        ]
+
+        captured_prompt = {}
+
+        def capture_analyze(prompt, system):
+            captured_prompt["prompt"] = prompt
+            return LLMResponse(
+                content='{"title": "Test", "narrative": "Test."}',
+                input_tokens=100, output_tokens=50, model="test"
+            )
+
+        mock_client = MagicMock()
+        mock_client.analyze.side_effect = capture_analyze
+        mock_client.parse_json_response.return_value = {"title": "T", "narrative": "N"}
+
+        generate_narrative(track_selections, mock_client, "test request")
+
+        for i in range(20):
+            assert f"Artist{i}" in captured_prompt["prompt"], (
+                f"Artist{i} missing from narrative prompt"
+            )
+
 
 class TestLiveVersionFiltering:
     """Tests for live version detection."""

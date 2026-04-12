@@ -200,7 +200,7 @@ def generate_narrative(
     # Build input for Query 2: track list with reasons
     tracks_with_reasons = "\n".join(
         f"- {sel.get('artist', 'Unknown')} - \"{sel.get('title', 'Unknown')}\": {sel.get('reason', 'Selected for this playlist')}"
-        for sel in track_selections[:15]  # Limit to first 15 for context efficiency
+        for sel in track_selections[:25]  # Include full 25-track playlist context
     )
 
     # Include user request for context
