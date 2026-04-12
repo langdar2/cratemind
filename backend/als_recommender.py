@@ -156,6 +156,10 @@ class ALSRecommender:
         an error occurs.
         """
         if self._model is None:
+            logger.info(
+                "ALS: no model loaded — falling back to play_count sort (%d candidates → top %d)",
+                len(candidate_tracks), n,
+            )
             return self._fallback_rank(candidate_tracks, n)
 
         try:
@@ -178,8 +182,16 @@ class ALSRecommender:
         if seed_track_id and seed_track_id in self._item_id_to_idx:
             seed_idx = self._item_id_to_idx[seed_track_id]
             ref_vec = item_factors[seed_idx]
+            logger.info(
+                "ALS: item-to-item ranking (seed=%s, model=%d items, candidates=%d → top %d)",
+                seed_track_id, len(self._item_ids), len(tracks), n,
+            )
         else:
             ref_vec = self._model.user_factors[0]  # user 0
+            logger.info(
+                "ALS: user-preference ranking (model=%d items, candidates=%d → top %d)",
+                len(self._item_ids), len(tracks), n,
+            )
 
         # Score: (als_score_or_-inf, play_count) — both sorted descending.
         # Known tracks: ALS dot-product score (always > -inf).
