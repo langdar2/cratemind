@@ -90,7 +90,11 @@ from backend.llm_client import (
 from backend.analyzer import analyze_prompt as do_analyze_prompt, analyze_track as do_analyze_track
 from backend.generator import generate_playlist_stream, generate_favorites_playlist_stream
 
+# basicConfig() is a no-op when uvicorn has already added handlers to the root
+# logger before importing this module. Set the level explicitly on the backend
+# namespace so all backend.* loggers emit INFO through uvicorn's handlers.
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("backend").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 
