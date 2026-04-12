@@ -51,8 +51,8 @@ def _build_feedback_prompt(rows: list[dict], limit: int = 20) -> str | None:
     return "\n".join(parts)
 
 
-# Fuzzy matching threshold (0-100 scale)
-FUZZ_THRESHOLD = 85
+# Fuzzy matching threshold (0-100 scale, used with token_sort_ratio)
+FUZZ_THRESHOLD = 72
 
 
 def simplify_string(s: str) -> str:
@@ -912,22 +912,23 @@ No markdown, no explanations — just the JSON array."""
 def _tracks_match(llm_artist: str, llm_title: str, library_track: Track) -> bool:
     """Check if LLM selection matches a library track.
 
-    Uses fuzzy matching to handle slight variations in naming.
+    Uses token_sort_ratio so word-order differences (e.g. "The Beatles" vs
+    "Beatles") and common 'The' prefixes don't cause misses.
+    Threshold is 72 — permissive enough to catch close variants, strict
+    enough to avoid cross-artist false positives.
     """
     from rapidfuzz import fuzz
 
-    # Compare titles
     simplified_llm_title = simplify_string(llm_title)
     simplified_lib_title = simplify_string(library_track.title)
 
-    if fuzz.ratio(simplified_llm_title, simplified_lib_title) < FUZZ_THRESHOLD:
+    if fuzz.token_sort_ratio(simplified_llm_title, simplified_lib_title) < FUZZ_THRESHOLD:
         return False
 
-    # Compare artists (with variations)
     for artist_variant in normalize_artist(llm_artist):
         simplified_artist = simplify_string(artist_variant)
         simplified_lib_artist = simplify_string(library_track.artist)
-        if fuzz.ratio(simplified_artist, simplified_lib_artist) >= FUZZ_THRESHOLD:
+        if fuzz.token_sort_ratio(simplified_artist, simplified_lib_artist) >= FUZZ_THRESHOLD:
             return True
 
     return False

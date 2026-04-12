@@ -180,6 +180,39 @@ class TestTrackMatching:
         assert "Tom and Jerry" in variations
         assert "Tom & Jerry" in variations
 
+    def test_tracks_match_handles_the_prefix(self):
+        """'Beatles' should match 'The Beatles' and vice versa."""
+        from backend.generator import _tracks_match
+        from backend.models import Track
+
+        track = Track(rating_key="1", title="Hey Jude", artist="The Beatles",
+                      album="Hey Jude", duration_ms=0, year=1968,
+                      genres=[], art_url="", play_count=0)
+
+        assert _tracks_match("Beatles", "Hey Jude", track) is True
+
+    def test_tracks_match_handles_word_order_difference(self):
+        """token_sort_ratio should handle reversed words in title."""
+        from backend.generator import _tracks_match
+        from backend.models import Track
+
+        track = Track(rating_key="1", title="Brothers in Arms", artist="Dire Straits",
+                      album="Brothers in Arms", duration_ms=0, year=1985,
+                      genres=[], art_url="", play_count=0)
+
+        assert _tracks_match("Dire Straits", "Arms in Brothers", track) is True
+
+    def test_tracks_match_rejects_clearly_different_tracks(self):
+        """Should not match clearly different artist/title combinations."""
+        from backend.generator import _tracks_match
+        from backend.models import Track
+
+        track = Track(rating_key="1", title="Bohemian Rhapsody", artist="Queen",
+                      album="A Night at the Opera", duration_ms=0, year=1975,
+                      genres=[], art_url="", play_count=0)
+
+        assert _tracks_match("Led Zeppelin", "Stairway to Heaven", track) is False
+
 class TestNarrativeGeneration:
     """Tests for curator narrative generation."""
 
