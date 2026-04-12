@@ -181,18 +181,22 @@ class ALSRecommender:
         else:
             ref_vec = self._model.user_factors[0]  # user 0
 
-        scored: list[tuple[float, Any]] = []
+        # Score: (als_score_or_-inf, play_count) — both sorted descending.
+        # Known tracks: ALS dot-product score (always > -inf).
+        # Unknown tracks: -inf so they always rank below known tracks,
+        #                 then sorted by play_count descending as tiebreaker.
+        scored: list[tuple[float, int, Any]] = []
         for track in tracks:
             tid = _track_id(track)
             if tid in self._item_id_to_idx:
                 idx = self._item_id_to_idx[tid]
                 score = float(np.dot(ref_vec, item_factors[idx]))
             else:
-                score = 0.0
-            scored.append((score, track))
+                score = float("-inf")
+            scored.append((score, _play_count(track), track))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [t for _, t in scored[:n]]
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [t for _, _, t in scored[:n]]
 
 
 # ---------------------------------------------------------------------------

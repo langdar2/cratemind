@@ -161,3 +161,45 @@ class TestALSRecommenderFallback:
 
         assert loader._model is not None
         assert len(loader._item_ids) == 100
+
+
+class TestALSUnknownTrackOrdering:
+    """Unknown tracks (not in model) should be ordered by play_count."""
+
+    def test_unknown_tracks_sorted_by_play_count(self, tmp_path):
+        """Tracks unknown to the model should rank by play_count descending."""
+        known_tracks = _make_tracks(100)
+        rec = ALSRecommender()
+        with patch("backend.als_recommender.MODEL_PATH", tmp_path / "als.pkl"):
+            rec.train(known_tracks)
+
+        # Candidates are UNKNOWN tracks (ids 1000+) with varying play_counts
+        unknown_tracks = [
+            {"gerbera_id": 1000 + i, "title": f"Unknown{i}", "artist": f"X{i}",
+             "album": "X", "play_count": pc}
+            for i, pc in enumerate([5, 30, 0, 15, 1])
+        ]
+
+        result = rec.rank(candidate_tracks=unknown_tracks, n=5)
+        play_counts = [t["play_count"] for t in result]
+        assert play_counts == sorted(play_counts, reverse=True), (
+            f"Unknown tracks not sorted by play_count: {play_counts}"
+        )
+
+    def test_known_tracks_rank_above_unknown_tracks(self, tmp_path):
+        """Known (ALS-scored) tracks should always rank above unknown tracks."""
+        known_tracks = _make_tracks(100)
+        rec = ALSRecommender()
+        with patch("backend.als_recommender.MODEL_PATH", tmp_path / "als.pkl"):
+            rec.train(known_tracks)
+
+        unknown_high_play = {"gerbera_id": 9999, "title": "PopularUnknown",
+                             "artist": "Z", "album": "Z", "play_count": 9999}
+        known_low_play = known_tracks[0].copy()  # has play_count from _make_tracks
+
+        candidates = [unknown_high_play, known_low_play]
+        result = rec.rank(candidate_tracks=candidates, n=2)
+
+        # Known track must come first regardless of play_count
+        first_id = str(result[0].get("gerbera_id") or result[0].get("id"))
+        assert first_id == str(known_low_play["gerbera_id"])
