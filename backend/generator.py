@@ -737,22 +737,32 @@ def generate_favorites_playlist_stream(
             "message": f"{len(fav_tracks)} Favoriten-Tracks, {len(new_tracks)} neue Tracks gefunden.",
         })
 
-        # Build curated pool: apply artist diversity cap on favorites, keep new tracks ordered by recency
-        _random.shuffle(fav_tracks)
+        # Rank favorites by ALS user-preference so the diversity cap favours the
+        # most relevant artists rather than a random shuffle order.
+        als_fav = _als_recommender.rank(fav_tracks, seed_track_id=None, n=len(fav_tracks))
+
+        # Apply artist diversity cap (max 8 per artist) on ALS-ranked favorites
         fav_counts: dict[str, int] = {}
         fav_pool: list[dict] = []
-        for t in fav_tracks:
+        for t in als_fav:
             key = (t.get("artist") or "").lower()
             if fav_counts.get(key, 0) < 8:
                 fav_pool.append(t)
                 fav_counts[key] = fav_counts.get(key, 0) + 1
 
-        # Trim pools so total fits in max_tracks_to_ai
-        max_new = min(len(new_tracks), 200)
+        # Rank new/unheard tracks by ALS relevance too
+        als_new = _als_recommender.rank(new_tracks, seed_track_id=None, n=len(new_tracks))
+
+        # Trim to budget
+        max_new = min(len(als_new), 200)
         max_fav = min(len(fav_pool), max_tracks_to_ai - max_new, 350)
-        if len(fav_pool) > max_fav:
-            fav_pool = _random.sample(fav_pool, max_fav)
-        new_pool = new_tracks[:max_new]
+        fav_pool = fav_pool[:max_fav]
+        new_pool = als_new[:max_new]
+
+        logger.info(
+            "Favorites pool: %d fav (ALS-ranked) + %d new (ALS-ranked) = %d total",
+            len(fav_pool), len(new_pool), len(fav_pool) + len(new_pool),
+        )
 
         combined = fav_pool + new_pool
         fav_ids = {t.get("gerbera_id") for t in fav_pool}
