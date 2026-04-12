@@ -43,6 +43,23 @@ def _parse_duration_ms(duration_str: str) -> int:
     return 0
 
 
+def read_album_artists(db_path: str) -> dict[int, str]:
+    """Return a mapping of gerbera_id → upnp:albumArtist for all tracks that have one."""
+    conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        cursor = conn.execute("""
+            SELECT item_id, property_value AS album_artist
+            FROM mt_metadata
+            WHERE property_name = 'upnp:albumArtist'
+              AND property_value IS NOT NULL
+              AND property_value != ''
+        """)
+        return {int(row["item_id"]): row["album_artist"] for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
+
 def read_tracks(db_path: str) -> list[GerberaTrack]:
     """Read all audio tracks from Gerbera's SQLite database."""
     conn = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
@@ -56,7 +73,10 @@ def read_tracks(db_path: str) -> list[GerberaTrack]:
                 r.duration,
                 COALESCE(ps.play_count, 0) AS play_count,
                 MAX(CASE WHEN m.property_name = 'dc:title'    THEN m.property_value END) AS meta_title,
-                MAX(CASE WHEN m.property_name = 'upnp:artist' THEN m.property_value END) AS artist,
+                COALESCE(
+                    MAX(CASE WHEN m.property_name = 'upnp:albumArtist' THEN m.property_value END),
+                    MAX(CASE WHEN m.property_name = 'upnp:artist'      THEN m.property_value END)
+                ) AS artist,
                 MAX(CASE WHEN m.property_name = 'upnp:album'  THEN m.property_value END) AS album,
                 MAX(CASE WHEN m.property_name = 'upnp:genre'  THEN m.property_value END) AS genre,
                 MAX(CASE WHEN m.property_name = 'dc:date'     THEN m.property_value END) AS year_str

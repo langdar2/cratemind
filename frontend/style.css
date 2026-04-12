@@ -1364,6 +1364,35 @@ textarea {
     margin-bottom: var(--spacing-md);
 }
 
+.settings-hint {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-md);
+    line-height: 1.5;
+}
+
+.settings-hint code {
+    background: var(--bg-tertiary);
+    padding: 2px 5px;
+    border-radius: var(--radius-sm);
+    font-family: monospace;
+    color: var(--text-primary);
+}
+
+.patch-result {
+    display: inline-block;
+    margin-left: var(--spacing-md);
+    font-size: var(--font-size-sm);
+}
+
+.patch-result--ok {
+    color: var(--success);
+}
+
+.patch-result--error {
+    color: var(--error);
+}
+
 .status-indicator {
     display: flex;
     align-items: center;

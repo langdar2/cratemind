@@ -71,7 +71,7 @@ from backend.models import (
     album_key,
 )
 from backend import library_cache
-from backend.gerbera_client import read_tracks
+from backend.gerbera_client import read_tracks, read_album_artists
 from backend.library_cache import init_db, sync_tracks, DB_PATH as CACHE_DB_PATH
 from backend.generator import write_m3u
 from backend.als_recommender import recommender as _als_recommender
@@ -537,6 +537,28 @@ async def trigger_library_sync():
     threading.Thread(target=_train_als, daemon=True).start()
 
     return {"status": "ok", "tracks_synced": count}
+
+
+@app.post("/api/library/patch-album-artists")
+async def patch_album_artists():
+    """Patch artist fields in the cache using upnp:albumArtist from the Gerbera DB.
+
+    Reads upnp:albumArtist metadata from Gerbera and updates the cached artist
+    field for any track where albumArtist differs from the current value.
+    Useful when tracks were synced before albumArtist support was added, or when
+    Gerbera stores different values in upnp:artist vs upnp:albumArtist.
+    """
+    config = get_config()
+    if not _is_gerbera_configured(config):
+        raise HTTPException(status_code=400, detail="Gerbera not configured")
+
+    try:
+        album_artists = await asyncio.to_thread(read_album_artists, config.gerbera.db_path)
+        updated = await asyncio.to_thread(library_cache.apply_album_artist_patch, album_artists)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Patch failed: {e}")
+
+    return {"status": "ok", "tracks_read": len(album_artists), "tracks_updated": updated}
 
 
 # =============================================================================

@@ -769,6 +769,17 @@
                     <h3>Library Statistics</h3>
                     <div id="library-stats"></div>
                 </section>
+
+                <section class="settings-section" id="library-tools-section" style="display: none;">
+                    <h3>Library Tools</h3>
+                    <div class="form-group">
+                        <p class="settings-hint">Korrigiert den Künstler-Namen im Cache anhand des <code>upnp:albumArtist</code>-Feldes aus der Gerbera-Datenbank. Nützlich, wenn Tracks mit dem falschen Interpreten (z.&nbsp;B. Featured Artist statt Album-Künstler) gespeichert wurden.</p>
+                        <button id="patch-album-artists-btn" class="btn btn-secondary">
+                            AlbumArtist-Patch anwenden
+                        </button>
+                        <span id="patch-album-artists-result" class="patch-result hidden"></span>
+                    </div>
+                </section>
             </div>
           <!-- Library View -->
           <div id="library-view" class="view">

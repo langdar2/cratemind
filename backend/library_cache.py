@@ -382,6 +382,39 @@ def get_sync_state() -> dict[str, Any]:
         conn.close()
 
 
+def apply_album_artist_patch(album_artists: dict[int, str]) -> int:
+    """Update the artist field for tracks where upnp:albumArtist differs from the cached artist.
+
+    Args:
+        album_artists: Mapping of gerbera_id → albumArtist string (from read_album_artists).
+
+    Returns:
+        Number of tracks updated.
+    """
+    if not album_artists:
+        return 0
+
+    conn = ensure_db_initialized()
+    updated = 0
+    try:
+        for gerbera_id, album_artist in album_artists.items():
+            cursor = conn.execute(
+                "SELECT artist FROM tracks WHERE gerbera_id = ?", (gerbera_id,)
+            )
+            row = cursor.fetchone()
+            if row and row["artist"] != album_artist:
+                conn.execute(
+                    "UPDATE tracks SET artist = ? WHERE gerbera_id = ?",
+                    (album_artist, gerbera_id),
+                )
+                updated += 1
+        conn.commit()
+        logger.info("AlbumArtist patch applied: %d tracks updated", updated)
+        return updated
+    finally:
+        conn.close()
+
+
 def get_cached_tracks() -> list[dict[str, Any]]:
     """Get all tracks from cache.
 

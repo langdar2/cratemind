@@ -2794,6 +2794,9 @@ function setupEventListeners() {
     // Save settings
     document.getElementById('save-settings-btn').addEventListener('click', handleSaveSettings);
 
+    // AlbumArtist patch button
+    document.getElementById('patch-album-artists-btn').addEventListener('click', handlePatchAlbumArtists);
+
     // Success modal - Start New Playlist
     document.getElementById('new-playlist-btn').addEventListener('click', hideSuccessModal);
 
@@ -3515,6 +3518,7 @@ async function loadSettings() {
         if (state.config.plex_connected) {
             const statsSection = document.getElementById('library-stats-section');
             statsSection.style.display = 'block';
+            document.getElementById('library-tools-section').style.display = 'block';
 
             try {
                 const stats = await fetchLibraryStats();
@@ -3609,6 +3613,29 @@ async function handleSaveSettings() {
         showError('Failed to save settings: ' + error.message);
     } finally {
         setLoading(false);
+    }
+}
+
+async function handlePatchAlbumArtists() {
+    const btn = document.getElementById('patch-album-artists-btn');
+    const result = document.getElementById('patch-album-artists-result');
+    btn.disabled = true;
+    btn.textContent = 'Wird angewendet…';
+    result.classList.add('hidden');
+    result.className = 'patch-result hidden';
+
+    try {
+        const data = await apiCall('/library/patch-album-artists', { method: 'POST' });
+        result.textContent = `${data.tracks_updated} von ${data.tracks_read} Tracks aktualisiert`;
+        result.classList.remove('hidden');
+        result.classList.add('patch-result--ok');
+    } catch (error) {
+        result.textContent = 'Fehler: ' + error.message;
+        result.classList.remove('hidden');
+        result.classList.add('patch-result--error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'AlbumArtist-Patch anwenden';
     }
 }
 
