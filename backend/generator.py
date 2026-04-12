@@ -136,11 +136,11 @@ def _diversify_tracks(tracks: list[Track], max_per_artist: int = 6) -> list[Trac
     return result
 
 
-def _weighted_sample(tracks: list[Track], target: int) -> list[Track]:
-    """Sample tracks with a 70/30 played-vs-unplayed split.
+def _apply_played_unplayed_split(tracks: list[Track], target: int) -> list[Track]:
+    """Select *target* tracks with a 70/30 played-vs-unplayed balance.
 
-    Keeps familiar favourites in reach while surfacing undiscovered tracks.
-    Falls back gracefully when one bucket is smaller than expected.
+    Preserves the relative ordering of *tracks* (e.g. ALS rank) within each
+    bucket so the highest-relevance tracks are chosen first.
     """
     if len(tracks) <= target:
         return tracks
@@ -151,7 +151,7 @@ def _weighted_sample(tracks: list[Track], target: int) -> list[Track]:
     n_played = min(round(target * 0.7), len(played))
     n_unplayed = min(target - n_played, len(unplayed))
 
-    # Fill any shortfall from the other bucket
+    # Fill shortfall from the other bucket
     shortage = target - n_played - n_unplayed
     if shortage > 0:
         if len(played) > n_played:
@@ -159,14 +159,10 @@ def _weighted_sample(tracks: list[Track], target: int) -> list[Track]:
         elif len(unplayed) > n_unplayed:
             n_unplayed = min(n_unplayed + shortage, len(unplayed))
 
-    result: list[Track] = []
-    if n_played > 0:
-        result.extend(_random.sample(played, n_played))
-    if n_unplayed > 0:
-        result.extend(_random.sample(unplayed, n_unplayed))
-
-    _random.shuffle(result)
-    return result
+    # Take top-N from each bucket (preserving ALS order within each)
+    selected_keys = {t.rating_key for t in played[:n_played]} | {t.rating_key for t in unplayed[:n_unplayed]}
+    # Restore original relative order (ALS rank)
+    return [t for t in tracks if t.rating_key in selected_keys]
 
 
 def generate_narrative(
@@ -382,20 +378,25 @@ def generate_playlist_stream(
         # to play_count sort when the model is not yet trained).
         diverse_pool = _diversify_tracks(raw_pool, max_per_artist=6)
         seed_id = seed_track.rating_key if seed_track else None
-        filtered_tracks = _als_recommender.rank(
+        als_ranked = _als_recommender.rank(
             candidate_tracks=diverse_pool,
             seed_track_id=seed_id,
             n=max_tracks_to_ai,
         )
+        filtered_tracks = _apply_played_unplayed_split(als_ranked, target=max_tracks_to_ai)
 
-        logger.info("Pool: %d raw → %d after diversity → %d after ALS rank",
-                    len(raw_pool), len(diverse_pool), len(filtered_tracks))
+        logger.info(
+            "Pool: %d raw → %d after diversity → %d after ALS rank → %d after 70/30 split",
+            len(raw_pool), len(diverse_pool), len(als_ranked), len(filtered_tracks),
+        )
 
         # Step 2: Report track count
-        if has_filters:
-            yield emit("progress", {"step": "filtering", "message": f"Using {len(filtered_tracks)} tracks..."})
-        else:
-            yield emit("progress", {"step": "filtering", "message": f"Using {len(filtered_tracks)} tracks (70/30 played/new)…"})
+        played_count = sum(1 for t in filtered_tracks if t.play_count > 0)
+        unplayed_count = len(filtered_tracks) - played_count
+        yield emit("progress", {
+            "step": "filtering",
+            "message": f"Using {len(filtered_tracks)} tracks ({played_count} played, {unplayed_count} unheard)…",
+        })
 
         # Step 3: Build track list
         yield emit("progress", {"step": "preparing", "message": f"Preparing {len(filtered_tracks)} tracks for AI..."})

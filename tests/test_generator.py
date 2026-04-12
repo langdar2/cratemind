@@ -421,3 +421,56 @@ class TestLiveVersionFiltering:
         assert is_live_version(MockTrack("Song", "2023-05-15 Show")) is True
         assert is_live_version(MockTrack("Song", "1999/12/31 New Years")) is True
         assert is_live_version(MockTrack("Song", "Regular Album 2023")) is False
+
+
+class TestPlayedUnplayedSplit:
+    """Tests for the 70/30 played/unplayed track selection."""
+
+    def _make_tracks(self, n_played: int, n_unplayed: int) -> list:
+        from backend.models import Track
+        played = [
+            Track(rating_key=str(i), title=f"Played {i}", artist=f"A{i}",
+                  album="Album", duration_ms=180000, year=2000,
+                  genres=[], art_url="", play_count=i + 1)
+            for i in range(n_played)
+        ]
+        unplayed = [
+            Track(rating_key=str(n_played + i), title=f"Unplayed {i}", artist=f"B{i}",
+                  album="Album", duration_ms=180000, year=2000,
+                  genres=[], art_url="", play_count=0)
+            for i in range(n_unplayed)
+        ]
+        return played + unplayed
+
+    def test_split_returns_70_percent_played(self):
+        from backend.generator import _apply_played_unplayed_split
+        tracks = self._make_tracks(n_played=100, n_unplayed=100)
+        result = _apply_played_unplayed_split(tracks, target=20)
+        played = [t for t in result if t.play_count > 0]
+        unplayed = [t for t in result if t.play_count == 0]
+        assert len(result) == 20
+        assert len(played) == 14  # round(20 * 0.7)
+        assert len(unplayed) == 6
+
+    def test_split_preserves_input_order(self):
+        from backend.generator import _apply_played_unplayed_split
+        tracks = self._make_tracks(n_played=50, n_unplayed=50)
+        result = _apply_played_unplayed_split(tracks, target=10)
+        # Result should be a subset preserving relative order from input
+        input_keys = [t.rating_key for t in tracks]
+        result_keys = [t.rating_key for t in result]
+        result_positions = [input_keys.index(k) for k in result_keys]
+        assert result_positions == sorted(result_positions)
+
+    def test_split_fills_shortfall_from_other_bucket(self):
+        from backend.generator import _apply_played_unplayed_split
+        # Only 3 unplayed tracks, need 6 → shortfall filled from played
+        tracks = self._make_tracks(n_played=50, n_unplayed=3)
+        result = _apply_played_unplayed_split(tracks, target=20)
+        assert len(result) == 20
+
+    def test_split_passthrough_when_below_target(self):
+        from backend.generator import _apply_played_unplayed_split
+        tracks = self._make_tracks(n_played=5, n_unplayed=5)
+        result = _apply_played_unplayed_split(tracks, target=20)
+        assert len(result) == 10  # all 10 returned unchanged
