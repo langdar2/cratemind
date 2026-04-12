@@ -391,8 +391,8 @@ def get_cached_tracks() -> list[dict[str, Any]]:
     conn = ensure_db_initialized()
     try:
         rows = conn.execute(
-            "SELECT rating_key, title, artist, album, duration_ms, year, "
-            "genres, user_rating, is_live FROM tracks"
+            "SELECT gerbera_id, title, artist, album, duration_ms, year, "
+            "genres, play_count, is_live FROM tracks"
         ).fetchall()
 
         tracks = []
@@ -437,9 +437,8 @@ def get_tracks_by_filters(
         if exclude_live:
             conditions.append("is_live = 0")
 
-        if min_rating > 0:
-            conditions.append("user_rating >= ?")
-            params.append(min_rating)
+        # Note: min_rating is accepted for API compatibility but Gerbera does not
+        # expose track ratings — the filter is silently skipped.
 
         if decades:
             decade_conditions = []
@@ -582,6 +581,17 @@ def check_server_changed(current_server_id: str) -> bool:
 # for Gerbera DLNA. plex_client.py will be deleted in a later task.
 
 
+def update_sync_state(**kwargs: Any) -> None:
+    """Update sync state fields atomically under the lock.
+
+    Usage:
+        update_sync_state(is_syncing=True, phase="fetching", current=0, total=100)
+        update_sync_state(is_syncing=False, error=None)
+    """
+    with _sync_lock:
+        _sync_state.update(kwargs)
+
+
 def get_sync_progress() -> dict[str, Any]:
     """Get current sync progress (for polling).
 
@@ -621,9 +631,8 @@ def count_tracks_by_filters(
         if exclude_live:
             conditions.append("is_live = 0")
 
-        if min_rating > 0:
-            conditions.append("user_rating >= ?")
-            params.append(min_rating)
+        # Note: min_rating is accepted for API compatibility but Gerbera does not
+        # expose track ratings — the filter is silently skipped.
 
         if decades:
             decade_conditions = []
@@ -656,7 +665,12 @@ def count_tracks_by_filters(
             if row["genres"]:
                 track_genres = json.loads(row["genres"])
                 track_genres_lower = [g.lower() for g in track_genres]
-                if any(g in track_genres_lower for g in genres_lower):
+                # Bidirectional substring match: "Rock" matches "Indie Rock" and vice-versa.
+                # Must match get_tracks_by_filters exactly so the preview count is accurate.
+                if any(
+                    any(req in tg or tg in req for req in genres_lower)
+                    for tg in track_genres_lower
+                ):
                     count += 1
 
         return count
@@ -737,8 +751,10 @@ def get_album_candidates(
 ) -> list[dict[str, Any]]:
     """Get album candidates aggregated from cached tracks.
 
-    Groups tracks by parent_rating_key to produce album-level data.
-    Supports genre/decade filtering.
+    Groups tracks by (artist, album) to produce album-level data.
+    Uses gerbera_id as the track identifier.
+    Supports genre/decade filtering with the same bidirectional substring
+    matching as get_tracks_by_filters.
 
     Args:
         genres: Optional genre filter (OR matching)
@@ -746,12 +762,12 @@ def get_album_candidates(
         exclude_live: Exclude live recordings (default True)
 
     Returns:
-        List of album dicts with parent_rating_key, album, album_artist,
-        year, genres, decade, track_count, track_rating_keys.
+        List of album dicts with parent_rating_key (artist||album composite),
+        album, album_artist, year, genres, decade, track_count, track_rating_keys.
     """
     conn = ensure_db_initialized()
     try:
-        conditions = ["parent_rating_key IS NOT NULL", "parent_rating_key != ''"]
+        conditions = []
         if exclude_live:
             conditions.append("is_live = 0")
         params: list[Any] = []
@@ -769,33 +785,31 @@ def get_album_candidates(
             if decade_conditions:
                 conditions.append(f"({' OR '.join(decade_conditions)})")
 
-        where_clause = " AND ".join(conditions)
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
         query = (
-            f"SELECT rating_key, title, artist, album, year, genres, parent_rating_key "
+            f"SELECT gerbera_id, title, artist, album, year, genres "
             f"FROM tracks WHERE {where_clause} "
-            f"ORDER BY parent_rating_key, rating_key"
+            f"ORDER BY artist, album, gerbera_id"
         )
 
         rows = conn.execute(query, params).fetchall()
 
-        # Aggregate tracks into albums
+        # Aggregate tracks into albums keyed by "artist||album"
         albums: dict[str, dict[str, Any]] = {}
         for row in rows:
-            prk = row["parent_rating_key"]
+            album_key = f"{row['artist']}||{row['album']}"
             track_genres = json.loads(row["genres"]) if row["genres"] else []
 
-            if prk not in albums:
-                # Derive decade from year
+            if album_key not in albums:
                 year = row["year"]
                 decade = ""
                 if year:
                     decade_start = (year // 10) * 10
                     decade = f"{decade_start}s"
 
-                albums[prk] = {
-                    "parent_rating_key": prk,
+                albums[album_key] = {
+                    "parent_rating_key": album_key,  # composite key for downstream compat
                     "album": row["album"],
-                    # artist column stores grandparentTitle (album artist), not track artist
                     "album_artist": row["artist"],
                     "year": year,
                     "genres": [],
@@ -805,24 +819,26 @@ def get_album_candidates(
                     "_genre_set": set(),
                 }
 
-            album = albums[prk]
+            album = albums[album_key]
             album["track_count"] += 1
-            album["track_rating_keys"].append(row["rating_key"])
+            album["track_rating_keys"].append(str(row["gerbera_id"]))
             for g in track_genres:
                 if g not in album["_genre_set"]:
                     album["_genre_set"].add(g)
                     album["genres"].append(g)
 
-        # Apply genre filter in Python (genres stored as JSON)
+        # Apply genre filter with same bidirectional substring logic as get_tracks_by_filters
         result = []
         genres_lower = [g.lower() for g in genres] if genres else None
         for album in albums.values():
-            # Remove internal tracking set
             del album["_genre_set"]
 
             if genres_lower:
                 album_genres_lower = [g.lower() for g in album["genres"]]
-                if not any(g in album_genres_lower for g in genres_lower):
+                if not any(
+                    any(req in ag or ag in req for req in genres_lower)
+                    for ag in album_genres_lower
+                ):
                     continue
 
             result.append(album)
@@ -1025,36 +1041,37 @@ def get_album_familiarity(
 ) -> dict[str, dict]:
     """Get familiarity data for albums aggregated from cached track play history.
 
+    Uses the same "artist||album" composite key as get_album_candidates.
     Classifies each album as:
     - "unplayed": 0 total plays across all tracks
     - "well-loved": avg plays per track >= 3
     - "light": some plays but avg < 3
 
     Args:
-        parent_rating_keys: Optional list of album keys to query.
+        parent_rating_keys: Optional list of "artist||album" composite keys to query.
             If None, returns all albums.
 
     Returns:
-        Dict mapping parent_rating_key -> {"level": str, "last_viewed_at": str|None}
+        Dict mapping "artist||album" -> {"level": str, "last_viewed_at": None}
+        (Gerbera does not expose last-play timestamps)
     """
     conn = ensure_db_initialized()
     try:
         query = (
-            "SELECT parent_rating_key, "
-            "SUM(view_count) AS total_plays, "
-            "AVG(view_count) AS avg_plays, "
-            "MAX(last_viewed_at) AS last_viewed "
+            "SELECT artist || '||' || album AS album_key, "
+            "SUM(play_count) AS total_plays, "
+            "AVG(play_count) AS avg_plays "
             "FROM tracks "
-            "WHERE parent_rating_key IS NOT NULL AND parent_rating_key != '' "
+            "WHERE 1=1 "
         )
         params: list[str] = []
 
         if parent_rating_keys is not None:
             placeholders = ",".join("?" for _ in parent_rating_keys)
-            query += f"AND parent_rating_key IN ({placeholders}) "
+            query += f"AND (artist || '||' || album) IN ({placeholders}) "
             params.extend(parent_rating_keys)
 
-        query += "GROUP BY parent_rating_key"
+        query += "GROUP BY artist, album"
 
         rows = conn.execute(query, params).fetchall()
 
@@ -1070,9 +1087,9 @@ def get_album_familiarity(
             else:
                 level = "light"
 
-            result[row["parent_rating_key"]] = {
+            result[row["album_key"]] = {
                 "level": level,
-                "last_viewed_at": row["last_viewed"],
+                "last_viewed_at": None,  # Gerbera does not expose last-play timestamps
             }
 
         return result

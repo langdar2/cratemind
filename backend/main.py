@@ -505,13 +505,17 @@ async def trigger_library_sync():
         raise HTTPException(status_code=409, detail="Sync already in progress")
 
     def _do_sync() -> int:
-        tracks = read_tracks(config.gerbera.db_path)
-        db_conn = init_db(str(CACHE_DB_PATH))
+        library_cache.update_sync_state(is_syncing=True, error=None)
         try:
-            sync_tracks(db_conn, tracks)
-            return len(tracks)
+            tracks = read_tracks(config.gerbera.db_path)
+            db_conn = init_db(str(CACHE_DB_PATH))
+            try:
+                sync_tracks(db_conn, tracks)
+                return len(tracks)
+            finally:
+                db_conn.close()
         finally:
-            db_conn.close()
+            library_cache.update_sync_state(is_syncing=False)
 
     try:
         count = await asyncio.to_thread(_do_sync)
@@ -1472,7 +1476,7 @@ async def recommend_generate(request: RecommendGenerateRequest, raw_request: Req
 # =============================================================================
 
 
-_VALID_RESULT_TYPES = {"prompt_playlist", "seed_playlist", "album_recommendation"}
+_VALID_RESULT_TYPES = {"prompt_playlist", "seed_playlist", "album_recommendation", "favorites_playlist"}
 
 
 @app.get("/api/results", response_model=ResultListResponse)

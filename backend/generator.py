@@ -522,7 +522,18 @@ def generate_playlist_stream(
         # Step 7: Generate narrative
         yield emit("progress", {"step": "narrative", "message": "Writing playlist narrative..."})
 
-        playlist_title, narrative = generate_narrative(track_selections, llm_client, prompt or "")
+        # Build narrative input from validated matched tracks only (not raw LLM output,
+        # which may include tracks that failed fuzzy matching).
+        matched_selections = [
+            {
+                "artist": t.artist,
+                "title": t.title,
+                "album": t.album,
+                "reason": track_reasons.get(t.rating_key, ""),
+            }
+            for t in matched_tracks
+        ]
+        playlist_title, narrative = generate_narrative(matched_selections, llm_client, prompt or "")
         logger.info("Generated narrative: title='%s', narrative_len=%d", playlist_title, len(narrative))
 
         # Emit narrative event for frontend
@@ -838,7 +849,16 @@ def generate_favorites_playlist_stream(
 
         yield emit("progress", {"step": "narrative", "message": "Playlist-Titel wird erstellt…"})
 
-        playlist_title, narrative = generate_narrative(track_selections, llm_client, "Favoriten-Mix")
+        matched_selections = [
+            {
+                "artist": t.artist,
+                "title": t.title,
+                "album": t.album,
+                "reason": track_reasons.get(t.rating_key, ""),
+            }
+            for t in matched_tracks
+        ]
+        playlist_title, narrative = generate_narrative(matched_selections, llm_client, "Favoriten-Mix")
 
         yield emit("narrative", {
             "playlist_title": playlist_title,

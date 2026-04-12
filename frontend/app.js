@@ -354,6 +354,9 @@ function generatePlaylistStream(request, onProgress, onComplete, onError, url = 
     // Timeout handling - 10 minutes for local providers, 5 minutes for cloud
     let timeoutId = null;
     let completed = false;
+    // Closure-local track buffer — avoids cross-request contamination when the
+    // user starts a new generation while the previous SSE stream is still active.
+    let pendingTracks = [];
     currentAbortController = new AbortController();
     const isLocalProvider = state.config?.is_local_provider ?? false;
     const TIMEOUT_MS = isLocalProvider ? 600000 : 300000;  // 10 min vs 5 min
@@ -427,26 +430,25 @@ function generatePlaylistStream(request, onProgress, onComplete, onError, url = 
                                 state.narrative = data.narrative || '';
                                 state.trackReasons = data.track_reasons || {};
                                 state.userRequest = data.user_request || '';
-                                // Initialize tracks array for batched receiving
-                                state.pendingTracks = [];
+                                // Reset closure-local buffer for this stream's batches
+                                pendingTracks = [];
                                 console.log('[CrateMind] Narrative received:', state.playlistTitle);
                             } else if (currentEvent === 'tracks') {
-                                // Accumulate track batches
+                                // Accumulate track batches into closure-local buffer
                                 if (data.batch && Array.isArray(data.batch)) {
-                                    state.pendingTracks = state.pendingTracks || [];
-                                    state.pendingTracks.push(...data.batch);
-                                    console.log('[CrateMind] Track batch received, total:', state.pendingTracks.length);
+                                    pendingTracks.push(...data.batch);
+                                    console.log('[CrateMind] Track batch received, total:', pendingTracks.length);
                                 }
                             } else if (currentEvent === 'complete') {
-                                console.log('[CrateMind] Complete event received, pending tracks:', state.pendingTracks?.length || 0);
+                                console.log('[CrateMind] Complete event received, pending tracks:', pendingTracks.length);
                                 clearTimeoutHandler();
                                 completed = true;
                                 // Merge accumulated tracks into complete data
                                 const completeData = {
                                     ...data,
-                                    tracks: state.pendingTracks || data.tracks || [],
+                                    tracks: pendingTracks.length > 0 ? pendingTracks : (data.tracks || []),
                                 };
-                                state.pendingTracks = [];
+                                pendingTracks = [];
                                 onComplete(completeData);
                             } else if (currentEvent === 'error') {
                                 clearTimeoutHandler();
@@ -466,15 +468,15 @@ function generatePlaylistStream(request, onProgress, onComplete, onError, url = 
                         console.warn('[CrateMind] Stream ended with unparsed buffer:', buffer);
                     }
                     // iOS Safari fallback: if stream ended without complete event but we have tracks
-                    if (state.pendingTracks && state.pendingTracks.length > 0 && !completed) {
-                        console.warn('[CrateMind] Stream ended without complete event, synthesizing completion with', state.pendingTracks.length, 'tracks');
+                    if (pendingTracks.length > 0 && !completed) {
+                        console.warn('[CrateMind] Stream ended without complete event, synthesizing completion with', pendingTracks.length, 'tracks');
                         const syntheticComplete = {
-                            tracks: state.pendingTracks,
-                            track_count: state.pendingTracks.length,
+                            tracks: pendingTracks,
+                            track_count: pendingTracks.length,
                             playlist_title: state.playlistTitle || 'Playlist',
                             narrative: state.narrative || '',
                         };
-                        state.pendingTracks = [];
+                        pendingTracks = [];
                         onComplete(syntheticComplete);
                     }
                     return;
