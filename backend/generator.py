@@ -21,12 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 def _build_feedback_prompt(rows: list[dict], limit: int = 20) -> str | None:
-    """Build a feedback context block for the LLM generation prompt.
+    """Build a structured feedback context block for the LLM generation prompt.
 
-    rows: list of dicts with keys gerbera_id, title, artist, album, rating.
+    Extracts unique artists from liked and disliked tracks so the LLM gets
+    explicit, actionable instructions rather than guessing from track titles.
+
+    rows: list of dicts with keys title, artist, album, rating.
           Expected in created_at DESC order (most recent first).
     limit: max tracks per sentiment to include.
-    Returns None if rows is empty or all filtered.
+    Returns None if rows is empty.
     """
     if not rows:
         return None
@@ -38,15 +41,28 @@ def _build_feedback_prompt(rows: list[dict], limit: int = 20) -> str | None:
         return None
 
     parts = ["User feedback from previous playlists:"]
+
     if liked:
-        track_list = ", ".join(f'"{r["title"]}" by {r["artist"]}' for r in liked)
-        parts.append(f"- Liked: {track_list}")
+        liked_artists = list(dict.fromkeys(r["artist"] for r in liked))
+        liked_tracks = ", ".join(f'"{r["title"]}"' for r in liked[:5])
+        parts.append(
+            f"- Liked tracks: {liked_tracks}"
+            + (f" (and {len(liked) - 5} more)" if len(liked) > 5 else "")
+        )
+        parts.append(f"- Preferred artists: {', '.join(liked_artists)}")
+
     if disliked:
-        track_list = ", ".join(f'"{r["title"]}" by {r["artist"]}' for r in disliked)
-        parts.append(f"- Disliked: {track_list}")
+        disliked_artists = list(dict.fromkeys(r["artist"] for r in disliked))
+        disliked_tracks = ", ".join(f'"{r["title"]}"' for r in disliked[:5])
+        parts.append(
+            f"- Disliked tracks: {disliked_tracks}"
+            + (f" (and {len(disliked) - 5} more)" if len(disliked) > 5 else "")
+        )
+        parts.append(f"- Avoid these artists: {', '.join(disliked_artists)}")
+
     parts.append(
-        "Prefer artists and styles similar to the liked tracks. "
-        "Avoid artists and styles similar to the disliked tracks."
+        "Strongly prefer tracks by the preferred artists and in similar styles. "
+        "Do not select tracks by artists listed under 'Avoid'."
     )
     return "\n".join(parts)
 

@@ -456,6 +456,58 @@ class TestLiveVersionFiltering:
         assert is_live_version(MockTrack("Song", "Regular Album 2023")) is False
 
 
+class TestFeedbackPromptBuilding:
+    """Tests for structured feedback prompt construction."""
+
+    def test_feedback_prompt_includes_liked_artists(self):
+        from backend.generator import _build_feedback_prompt
+
+        rows = [
+            {"rating": 1, "title": "Song A", "artist": "Radiohead", "album": "OK Computer"},
+            {"rating": 1, "title": "Song B", "artist": "Portishead", "album": "Dummy"},
+            {"rating": -1, "title": "Song C", "artist": "Coldplay", "album": "Parachute"},
+        ]
+        result = _build_feedback_prompt(rows)
+        assert result is not None
+        assert "Radiohead" in result
+        assert "Portishead" in result
+        assert "Coldplay" in result
+        assert "Prefer" in result or "prefer" in result
+
+    def test_feedback_prompt_deduplicates_artists(self):
+        from backend.generator import _build_feedback_prompt
+
+        rows = [
+            {"rating": 1, "title": "Song A", "artist": "Radiohead", "album": "Pablo Honey"},
+            {"rating": 1, "title": "Song B", "artist": "Radiohead", "album": "The Bends"},
+            {"rating": 1, "title": "Song C", "artist": "Radiohead", "album": "OK Computer"},
+        ]
+        result = _build_feedback_prompt(rows)
+        assert result is not None
+        assert result.count("Radiohead") == 1
+
+    def test_feedback_prompt_returns_none_when_empty(self):
+        from backend.generator import _build_feedback_prompt
+
+        assert _build_feedback_prompt([]) is None
+
+    def test_feedback_prompt_handles_only_liked(self):
+        from backend.generator import _build_feedback_prompt
+
+        rows = [{"rating": 1, "title": "Song", "artist": "Artist", "album": "Album"}]
+        result = _build_feedback_prompt(rows)
+        assert result is not None
+        assert "Artist" in result
+
+    def test_feedback_prompt_handles_only_disliked(self):
+        from backend.generator import _build_feedback_prompt
+
+        rows = [{"rating": -1, "title": "Song", "artist": "BadArtist", "album": "Album"}]
+        result = _build_feedback_prompt(rows)
+        assert result is not None
+        assert "BadArtist" in result
+
+
 class TestPlayedUnplayedSplit:
     """Tests for the 70/30 played/unplayed track selection."""
 
