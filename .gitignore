@@ -45,6 +45,7 @@ htmlcov/
 *~
 
 # Development tools
+.worktrees/
 .claude/
 .playwright-cli/
 .specify/
