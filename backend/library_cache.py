@@ -43,6 +43,13 @@ _sync_lock = threading.Lock()
 _schema_initialized = False
 _schema_lock = threading.Lock()
 
+# Audio extraction state flag (in-memory)
+_audio_extracting = False
+
+
+def _audio_extraction_running() -> bool:
+    return _audio_extracting
+
 
 # =============================================================================
 # Gerbera-specific: init_db, sync_tracks, get_tracks
@@ -316,6 +323,31 @@ def init_schema(conn: sqlite3.Connection) -> bool:
         migration_applied = True
     except sqlite3.OperationalError:
         pass  # Column already exists — no action needed
+
+    # Migration: audio feature columns
+    for col_def in [
+        "ALTER TABLE tracks ADD COLUMN bpm                REAL",
+        "ALTER TABLE tracks ADD COLUMN energy             REAL",
+        "ALTER TABLE tracks ADD COLUMN spectral_centroid  REAL",
+        "ALTER TABLE tracks ADD COLUMN zero_crossing_rate REAL",
+        "ALTER TABLE tracks ADD COLUMN acousticness       REAL",
+        "ALTER TABLE tracks ADD COLUMN audio_extracted_at TEXT",
+    ]:
+        try:
+            conn.execute(col_def)
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+    for col_def in [
+        "ALTER TABLE sync_state ADD COLUMN audio_extraction_current INTEGER DEFAULT 0",
+        "ALTER TABLE sync_state ADD COLUMN audio_extraction_total   INTEGER DEFAULT 0",
+    ]:
+        try:
+            conn.execute(col_def)
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+    conn.commit()
 
     return migration_applied
 
@@ -592,26 +624,6 @@ def is_cache_stale(max_age_hours: int = 24) -> bool:
         return True
 
 
-def check_server_changed(current_server_id: str) -> bool:
-    """Check if Plex server has changed since last sync.
-
-    Args:
-        current_server_id: Current Plex server's machineIdentifier
-
-    Returns:
-        True if server changed (cache should be cleared)
-    """
-    state = get_sync_state()
-    cached_server_id = state.get("plex_server_id")
-
-    if not cached_server_id:
-        return False  # First sync, no change
-
-    return cached_server_id != current_server_id
-
-
-# sync_library(plex_client, ...) has been removed — replaced by sync_tracks()
-# for Gerbera DLNA. plex_client.py will be deleted in a later task.
 
 
 def update_sync_state(**kwargs: Any) -> None:
@@ -1339,5 +1351,72 @@ def get_track_feedback() -> list[dict]:
             "FROM track_feedback ORDER BY created_at DESC"
         ).fetchall()
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_tracks_without_audio_features() -> list[dict[str, Any]]:
+    """Return tracks that have not yet had audio features extracted (bpm IS NULL).
+
+    Returns:
+        List of dicts with gerbera_id and file_path keys.
+    """
+    conn = ensure_db_initialized()
+    try:
+        rows = conn.execute(
+            "SELECT gerbera_id, file_path FROM tracks WHERE bpm IS NULL AND file_path IS NOT NULL"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def save_audio_features(gerbera_id: int, features: dict[str, float]) -> None:
+    """Write extracted audio features back into the tracks table.
+
+    Args:
+        gerbera_id: Track identifier.
+        features: Dict with keys bpm, energy, spectral_centroid, zero_crossing_rate, acousticness.
+    """
+    conn = ensure_db_initialized()
+    try:
+        conn.execute(
+            """UPDATE tracks SET
+                bpm = ?, energy = ?, spectral_centroid = ?,
+                zero_crossing_rate = ?, acousticness = ?,
+                audio_extracted_at = datetime('now')
+               WHERE gerbera_id = ?""",
+            (
+                features.get("bpm"),
+                features.get("energy"),
+                features.get("spectral_centroid"),
+                features.get("zero_crossing_rate"),
+                features.get("acousticness"),
+                gerbera_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_audio_extraction_state() -> dict[str, Any]:
+    """Return the current audio extraction progress from sync_state.
+
+    Returns:
+        Dict with keys: current (int), total (int), is_extracting (bool).
+    """
+    conn = ensure_db_initialized()
+    try:
+        row = conn.execute(
+            "SELECT audio_extraction_current, audio_extraction_total FROM sync_state WHERE id = 1"
+        ).fetchone()
+        current = row["audio_extraction_current"] if row else 0
+        total = row["audio_extraction_total"] if row else 0
+        return {
+            "current": current or 0,
+            "total": total or 0,
+            "is_extracting": _audio_extraction_running(),
+        }
     finally:
         conn.close()
