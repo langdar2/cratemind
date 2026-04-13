@@ -152,6 +152,15 @@ class DecadeCount(BaseModel):
     count: int | None = None
 
 
+class AudioConstraints(BaseModel):
+    """Acoustic constraints extracted from a user prompt by the intent LLM."""
+
+    bpm_min: float | None = None
+    bpm_max: float | None = None
+    energy_max: float | None = None
+    acousticness_min: float | None = None
+
+
 class LibraryStatsResponse(BaseModel):
     """Library statistics response."""
 
@@ -176,6 +185,7 @@ class AnalyzePromptResponse(BaseModel):
     reasoning: str
     token_count: int = 0
     estimated_cost: float = 0.0
+    audio_constraints: AudioConstraints | None = None
 
 
 class AnalyzeTrackRequest(BaseModel):
