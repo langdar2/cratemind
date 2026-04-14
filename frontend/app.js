@@ -5714,7 +5714,7 @@ async function loadLibraryView() {
 function audioExtractionBadgeHtml(audioExtracted, trackCount) {
   const pct = trackCount > 0 ? audioExtracted / trackCount : 0;
   const cls = pct === 1 ? 'green' : pct > 0 ? 'yellow' : 'red';
-  const label = `${audioExtracted} / ${trackCount} Tracks analysiert`;
+  const label = `${Number(audioExtracted)} / ${Number(trackCount)} Tracks analysiert`;
   return `<span class="lib-audio-dot lib-audio-dot--${cls}" title="${label}" aria-label="${label}"></span>`;
 }
 
