@@ -160,6 +160,13 @@ class AudioConstraints(BaseModel):
     energy_max: float | None = None
     acousticness_min: float | None = None
 
+    @model_validator(mode="after")
+    def check_bpm_order(self) -> "AudioConstraints":
+        if self.bpm_min is not None and self.bpm_max is not None:
+            if self.bpm_min >= self.bpm_max:
+                raise ValueError("bpm_min must be less than bpm_max")
+        return self
+
 
 class LibraryStatsResponse(BaseModel):
     """Library statistics response."""

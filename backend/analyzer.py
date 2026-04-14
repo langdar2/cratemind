@@ -24,7 +24,7 @@ Return a JSON object with:
 - audio_constraints: Object with acoustic constraints, or null if the prompt has no clear acoustic hints
 
 For audio_constraints, use these mappings ONLY when the prompt clearly implies them:
-- bpm_min / bpm_max: "slow"/"langsam" → 40–80, "medium" → 80–120, "driving"/"treibend" → 120+
+- bpm_min / bpm_max: "slow"/"langsam" → bpm_max: 80 (omit bpm_min), "medium" → 40–120, "fast"/"driving"/"treibend" → bpm_min: 120 (omit bpm_max)
 - energy_max: "quiet"/"ruhig" → 0.3, "relaxed"/"entspannt" → 0.5; omit for energetic prompts
 - acousticness_min: "no electric guitars"/"acoustic only" → 0.7, "pure acoustic" → 0.8
 
@@ -127,13 +127,16 @@ Suggest genres and decades from the available options that best match the user's
     # Parse optional audio constraints from LLM response
     raw_constraints = data.get("audio_constraints")
     audio_constraints = None
-    if isinstance(raw_constraints, dict):
-        audio_constraints = AudioConstraints(
+    if isinstance(raw_constraints, dict) and raw_constraints:
+        candidate = AudioConstraints(
             bpm_min=raw_constraints.get("bpm_min"),
             bpm_max=raw_constraints.get("bpm_max"),
             energy_max=raw_constraints.get("energy_max"),
             acousticness_min=raw_constraints.get("acousticness_min"),
         )
+        # Only keep if at least one field was actually populated
+        if any(v is not None for v in candidate.model_dump().values()):
+            audio_constraints = candidate
 
     return AnalyzePromptResponse(
         suggested_genres=suggested_genres,

@@ -72,3 +72,21 @@ def test_analyze_prompt_with_acousticness():
         result = analyze_prompt("Acoustic guitar, no electric instruments")
 
     assert result.audio_constraints.acousticness_min == 0.7
+
+
+def test_analyze_prompt_empty_audio_constraints_dict():
+    """LLM returning {} for audio_constraints → None (not a vacuous object)."""
+    mock_client = _make_llm_client({
+        "genres": ["Electronic"],
+        "decades": [],
+        "reasoning": "Electronic music",
+        "audio_constraints": {},
+    })
+
+    with patch("backend.analyzer.get_llm_client", return_value=mock_client), \
+         patch("backend.analyzer.library_cache.get_cached_genre_decade_stats",
+               return_value={"genres": [], "decades": []}):
+        from backend.analyzer import analyze_prompt
+        result = analyze_prompt("Electronic music")
+
+    assert result.audio_constraints is None
