@@ -202,7 +202,8 @@ def make_db_with_favorites():
             genres TEXT, year INTEGER, duration_ms INTEGER,
             file_path TEXT, play_count INTEGER DEFAULT 0,
             is_live BOOLEAN DEFAULT 0,
-            first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            bpm REAL
         );
         CREATE TABLE IF NOT EXISTS sync_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -330,6 +331,52 @@ def test_get_albums_with_stats_is_favorite_flag():
         toggle_favorite("album", "Radiohead", album="OK Computer", conn=conn)
         rows = get_albums_with_stats(conn=conn)
         assert rows[0]["is_favorite"] is True
+    finally:
+        conn.close()
+        os.unlink(db_path)
+
+
+def test_get_artists_with_stats_audio_extracted_count():
+    from backend.library_cache import get_artists_with_stats
+    conn, db_path = make_db_with_favorites()
+    try:
+        conn.executemany(
+            "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, is_live, bpm) VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (1, "So What",    "Miles Davis", "Kind of Blue", "[]", "/a.flac", 0, 120.0),
+                (2, "All Blues",  "Miles Davis", "Kind of Blue", "[]", "/b.flac", 0, None),
+                (3, "Creep",      "Radiohead",   "Pablo Honey",  "[]", "/c.flac", 0, None),
+            ],
+        )
+        conn.commit()
+        rows = get_artists_with_stats(conn=conn)
+        miles = next(r for r in rows if r["artist"] == "Miles Davis")
+        radiohead = next(r for r in rows if r["artist"] == "Radiohead")
+        assert miles["audio_extracted"] == 1
+        assert radiohead["audio_extracted"] == 0
+    finally:
+        conn.close()
+        os.unlink(db_path)
+
+
+def test_get_albums_with_stats_audio_extracted_count():
+    from backend.library_cache import get_albums_with_stats
+    conn, db_path = make_db_with_favorites()
+    try:
+        conn.executemany(
+            "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, is_live, bpm) VALUES (?,?,?,?,?,?,?,?)",
+            [
+                (1, "Track1", "Radiohead", "OK Computer", "[]", "/a.flac", 0, 95.0),
+                (2, "Track2", "Radiohead", "OK Computer", "[]", "/b.flac", 0, 102.0),
+                (3, "Creep",  "Radiohead", "Pablo Honey",  "[]", "/c.flac", 0, None),
+            ],
+        )
+        conn.commit()
+        rows = get_albums_with_stats(conn=conn)
+        ok = next(r for r in rows if r["album"] == "OK Computer")
+        pablo = next(r for r in rows if r["album"] == "Pablo Honey")
+        assert ok["audio_extracted"] == 2
+        assert pablo["audio_extracted"] == 0
     finally:
         conn.close()
         os.unlink(db_path)

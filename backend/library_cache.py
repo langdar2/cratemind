@@ -1034,6 +1034,7 @@ def get_artists_with_stats(
             SELECT
                 t.artist,
                 COUNT(*) AS track_count,
+                SUM(CASE WHEN t.bpm IS NOT NULL THEN 1 ELSE 0 END) AS audio_extracted,
                 MIN(t.first_seen_at) AS first_seen,
                 EXISTS(
                     SELECT 1 FROM favorites f
@@ -1058,6 +1059,7 @@ def get_artists_with_stats(
                 "track_count": row["track_count"],
                 "is_new": is_new,
                 "is_favorite": bool(row["is_favorite"]),
+                "audio_extracted": row["audio_extracted"],
             })
         return result
     finally:
@@ -1084,6 +1086,7 @@ def get_albums_with_stats(
                 t.artist,
                 t.album,
                 COUNT(*) AS track_count,
+                SUM(CASE WHEN t.bpm IS NOT NULL THEN 1 ELSE 0 END) AS audio_extracted,
                 MIN(t.first_seen_at) AS first_seen,
                 EXISTS(
                     SELECT 1 FROM favorites f
@@ -1111,6 +1114,7 @@ def get_albums_with_stats(
                 "track_count": row["track_count"],
                 "is_new": is_new,
                 "is_favorite": bool(row["is_favorite"]),
+                "audio_extracted": row["audio_extracted"],
             })
         return result
     finally:

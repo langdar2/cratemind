@@ -906,6 +906,7 @@ class ArtistStat(BaseModel):
     track_count: int
     is_new: bool
     is_favorite: bool
+    audio_extracted: int = 0
 
 
 class AlbumStat(BaseModel):
@@ -914,6 +915,7 @@ class AlbumStat(BaseModel):
     track_count: int
     is_new: bool
     is_favorite: bool
+    audio_extracted: int = 0
 
 
 class LibraryArtistsResponse(BaseModel):
