@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libopenblas-dev \
         pkg-config \
+        libsndfile1-dev \
+        libsoxr-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -20,6 +22,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_VERSION=${VERSION}
 
 WORKDIR /app
+
+# Runtime audio libraries required by librosa
+# - libsndfile1: WAV/FLAC/OGG decoding (soundfile backend)
+# - libsoxr0: high-quality resampling (soxr backend)
+# - ffmpeg: MP3/M4A/AAC decoding (audioread backend)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libsndfile1 \
+        libsoxr0 \
+        ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy pre-built packages from builder
 COPY --from=builder /install /usr/local
