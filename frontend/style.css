@@ -4125,6 +4125,18 @@ body.no-scroll {
   margin-left: auto;
 }
 
+.lib-audio-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: default;
+}
+.lib-audio-dot--green  { background: #4caf50; }
+.lib-audio-dot--yellow { background: #e5a00d; }
+.lib-audio-dot--red    { background: #e53935; }
+
 .lib-footer {
   display: flex;
   justify-content: space-between;
