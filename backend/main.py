@@ -799,7 +799,14 @@ async def generate_playlist_sse(request: GenerateRequest) -> StreamingResponse:
             raise HTTPException(status_code=404, detail="Seed track not found")
         selected_dimensions = request.seed_track.selected_dimensions
 
-    audio_constraints = request.audio_constraints if request else None
+    # Extract audio constraints from prompt analysis (non-blocking — falls back to None on failure)
+    audio_constraints = None
+    if request.prompt:
+        try:
+            analysis = await asyncio.to_thread(do_analyze_prompt, request.prompt)
+            audio_constraints = analysis.audio_constraints
+        except Exception as exc:
+            logger.warning("Audio constraint analysis failed during generate: %s", exc)
 
     def event_stream():
         yield from generate_playlist_stream(

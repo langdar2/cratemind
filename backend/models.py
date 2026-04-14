@@ -251,7 +251,6 @@ class GenerateRequest(BaseModel):
     exclude_live: bool = True
     min_rating: int = 0  # 0 = any, 2/4/6/8/10 = minimum rating
     max_tracks_to_ai: int = 500  # 0 = no limit
-    audio_constraints: AudioConstraints | None = None
 
     @model_validator(mode="after")
     def check_flow(self) -> "GenerateRequest":
