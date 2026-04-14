@@ -299,6 +299,22 @@ def _get_tracks_from_cache(
             limit=effective_limit,
             audio_constraints=audio_constraints,
         )
+
+        # Fallback: if audio constraints reduced the pool too aggressively, ignore them
+        if audio_constraints is not None and len(cached_tracks) < 50:
+            logger.warning(
+                "Audio constraints produced only %d tracks (< 50) — ignoring audio constraints",
+                len(cached_tracks),
+            )
+            cached_tracks = library_cache.get_tracks_by_filters(
+                genres=genres,
+                decades=decades,
+                min_rating=min_rating,
+                exclude_live=exclude_live,
+                limit=effective_limit,
+                audio_constraints=None,
+            )
+
         return [_cached_track_to_model(t) for t in cached_tracks]
 
     logger.warning("Library cache is empty — no tracks available")
