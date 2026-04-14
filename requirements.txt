@@ -71,6 +71,7 @@ jiter==0.13.0
     #   openai
 json-repair==0.56.0
     # via -r requirements.in
+librosa>=0.10.0
 lxml==6.0.2
     # via
     #   lxml-html-clean
