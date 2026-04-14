@@ -10,6 +10,10 @@ from collections.abc import Generator
 from datetime import datetime
 from datetime import date as _date
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.models import AudioConstraints
 
 from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
@@ -276,6 +280,7 @@ def _get_tracks_from_cache(
     exclude_live: bool,
     min_rating: int,
     max_tracks_to_ai: int,
+    audio_constraints: "AudioConstraints | None" = None,
 ) -> list[Track]:
     """Get tracks from local library cache.
 
@@ -292,6 +297,7 @@ def _get_tracks_from_cache(
             min_rating=min_rating,
             exclude_live=exclude_live,
             limit=effective_limit,
+            audio_constraints=audio_constraints,
         )
         return [_cached_track_to_model(t) for t in cached_tracks]
 
@@ -351,6 +357,7 @@ def generate_playlist_stream(
     exclude_live: bool = True,
     min_rating: int = 0,
     max_tracks_to_ai: int = 500,
+    audio_constraints: "AudioConstraints | None" = None,
 ) -> Generator[str, None, None]:
     """Generate a playlist with streaming progress updates.
 
@@ -384,6 +391,7 @@ def generate_playlist_stream(
             exclude_live=exclude_live,
             min_rating=min_rating,
             max_tracks_to_ai=pool_size,
+            audio_constraints=audio_constraints,
         )
 
         if not raw_pool:
