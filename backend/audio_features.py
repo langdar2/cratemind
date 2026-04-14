@@ -78,7 +78,6 @@ def _run_extraction() -> None:
     Runs as a background daemon thread. Updates sync_state progress columns.
     Skips unreadable files and logs warnings without stopping.
     """
-    library_cache._audio_extracting = True
     try:
         tracks = library_cache.get_tracks_without_audio_features()
         total = len(tracks)
@@ -135,6 +134,8 @@ def extract_audio_features_background() -> None:
         logger.info("Audio extraction already running — skipping start")
         return
 
+    # Set flag before starting thread to close the check-then-act race window.
+    library_cache._audio_extracting = True
     thread = threading.Thread(target=_run_extraction, daemon=True, name="audio-extractor")
     thread.start()
     logger.info("Audio extraction thread started")

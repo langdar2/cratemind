@@ -59,6 +59,7 @@ from backend.models import (
     SavePlaylistResponse,
     SetupCompleteResponse,
     SetupStatusResponse,
+    AudioExtractionStatusResponse,
     SyncProgress,
     SyncTriggerResponse,
     ToggleFavoriteRequest,
@@ -544,14 +545,14 @@ async def trigger_library_sync():
 
 
 @app.get("/api/library/audio-status")
-async def get_audio_extraction_status():
+async def get_audio_extraction_status() -> AudioExtractionStatusResponse:
     """Return current audio feature extraction progress."""
     state = library_cache.get_audio_extraction_state()
-    return {
-        "total": state["total"],
-        "extracted": state["current"],
-        "is_extracting": state["is_extracting"],
-    }
+    return AudioExtractionStatusResponse(
+        total=state["total"],
+        extracted=state["current"],
+        is_extracting=state["is_extracting"],
+    )
 
 
 @app.post("/api/library/patch-album-artists")

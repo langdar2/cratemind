@@ -556,6 +556,14 @@ class SyncTriggerResponse(BaseModel):
     blocking: bool = False
 
 
+class AudioExtractionStatusResponse(BaseModel):
+    """Response from GET /api/library/audio-status."""
+
+    total: int
+    extracted: int
+    is_extracting: bool
+
+
 # =============================================================================
 # Recommendation Models (006)
 # =============================================================================
