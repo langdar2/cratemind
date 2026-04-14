@@ -59,6 +59,7 @@ from backend.models import (
     SavePlaylistResponse,
     SetupCompleteResponse,
     SetupStatusResponse,
+    AudioExtractionStatusResponse,
     SyncProgress,
     SyncTriggerResponse,
     ToggleFavoriteRequest,
@@ -536,7 +537,22 @@ async def trigger_library_sync():
 
     threading.Thread(target=_train_als, daemon=True).start()
 
-    return {"status": "ok", "tracks_synced": count}
+    # Start audio feature extraction in background after sync
+    from backend.audio_features import extract_audio_features_background
+    extract_audio_features_background()
+
+    return SyncTriggerResponse(started=True)
+
+
+@app.get("/api/library/audio-status")
+async def get_audio_extraction_status() -> AudioExtractionStatusResponse:
+    """Return current audio feature extraction progress."""
+    state = library_cache.get_audio_extraction_state()
+    return AudioExtractionStatusResponse(
+        total=state["total"],
+        extracted=state["current"],
+        is_extracting=state["is_extracting"],
+    )
 
 
 @app.post("/api/library/patch-album-artists")
@@ -784,6 +800,15 @@ async def generate_playlist_sse(request: GenerateRequest) -> StreamingResponse:
             raise HTTPException(status_code=404, detail="Seed track not found")
         selected_dimensions = request.seed_track.selected_dimensions
 
+    # Extract audio constraints from prompt analysis (non-blocking — falls back to None on failure)
+    audio_constraints = None
+    if request.prompt:
+        try:
+            analysis = await asyncio.to_thread(do_analyze_prompt, request.prompt)
+            audio_constraints = analysis.audio_constraints
+        except Exception as exc:
+            logger.warning("Audio constraint analysis failed during generate: %s", exc)
+
     def event_stream():
         yield from generate_playlist_stream(
             prompt=request.prompt,
@@ -797,6 +822,7 @@ async def generate_playlist_sse(request: GenerateRequest) -> StreamingResponse:
             exclude_live=request.exclude_live,
             min_rating=request.min_rating,
             max_tracks_to_ai=request.max_tracks_to_ai,
+            audio_constraints=audio_constraints,
         )
 
     return StreamingResponse(

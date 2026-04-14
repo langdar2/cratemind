@@ -15,4 +15,8 @@ services:
       - /path/to/playlists:/music/playlists
       # Persist app data (library cache, settings, result history)
       - ./data:/app/data
+      # Music library volume (required for audio feature extraction).
+      # Set the path to match exactly what Gerbera stores in its database.
+      # Example: if Gerbera stores /mnt/music/song.flac, use /mnt/music:/mnt/music:ro
+      - ${MUSIC_PATH:-/music}:${MUSIC_PATH:-/music}:ro
     restart: unless-stopped

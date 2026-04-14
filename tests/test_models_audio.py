@@ -36,3 +36,13 @@ def test_analyze_prompt_response_with_constraints():
     )
     assert r.audio_constraints.bpm_max == 100
     assert r.audio_constraints.energy_max == 0.4
+
+
+def test_audio_constraints_bpm_order_validation():
+    with pytest.raises(Exception):
+        AudioConstraints(bpm_min=120, bpm_max=80)
+
+
+def test_audio_constraints_equal_bpm_rejected():
+    with pytest.raises(Exception):
+        AudioConstraints(bpm_min=80, bpm_max=80)

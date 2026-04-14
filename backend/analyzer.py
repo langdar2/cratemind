@@ -4,6 +4,7 @@ from backend.llm_client import get_llm_client
 from backend.models import (
     AnalyzePromptResponse,
     AnalyzeTrackResponse,
+    AudioConstraints,
     Dimension,
     GenreCount,
     DecadeCount,
@@ -14,18 +15,36 @@ from backend import library_cache
 
 PROMPT_ANALYSIS_SYSTEM = """You are a music expert helping to create playlists from a user's music library.
 
-Analyze the user's prompt and suggest appropriate filters (genres and decades) that would help find matching tracks.
+Analyze the user's prompt and suggest appropriate filters (genres, decades) and optional acoustic constraints.
 
 Return a JSON object with:
 - genres: Array of genre names that match the prompt (e.g., ["Alternative", "Rock", "Indie"])
 - decades: Array of decade strings (e.g., ["1990s", "2000s"])
 - reasoning: Brief explanation of why you chose these filters
+- audio_constraints: Object with acoustic constraints, or null if the prompt has no clear acoustic hints
 
-Be specific about genres and decades. Consider:
-- Mood/atmosphere (melancholy, upbeat, energetic)
-- Era references (90s, classic, modern)
-- Genre keywords (alternative, jazz, electronic)
-- Artist style hints
+For audio_constraints, use these mappings ONLY when the prompt clearly implies them:
+- bpm_min / bpm_max: "slow"/"langsam" → bpm_max: 80 (omit bpm_min), "medium" → 40–120, "fast"/"driving"/"treibend" → bpm_min: 120 (omit bpm_max)
+- energy_max: "quiet"/"ruhig" → 0.3, "relaxed"/"entspannt" → 0.5; omit for energetic prompts
+- acousticness_min: "no electric guitars"/"acoustic only" → 0.7, "pure acoustic" → 0.8
+
+Leave audio_constraints null for neutral prompts without acoustic hints.
+
+Example with constraints:
+{
+  "genres": ["Jazz", "Ambient"],
+  "decades": ["1990s"],
+  "reasoning": "Slow, quiet jazz",
+  "audio_constraints": {"bpm_min": 40, "bpm_max": 80, "energy_max": 0.3}
+}
+
+Example without constraints:
+{
+  "genres": ["Rock"],
+  "decades": ["1980s"],
+  "reasoning": "Classic rock",
+  "audio_constraints": null
+}
 
 Return ONLY valid JSON, no markdown formatting."""
 
@@ -105,6 +124,20 @@ Suggest genres and decades from the available options that best match the user's
         if d in available_decade_names
     ]
 
+    # Parse optional audio constraints from LLM response
+    raw_constraints = data.get("audio_constraints")
+    audio_constraints = None
+    if isinstance(raw_constraints, dict) and raw_constraints:
+        candidate = AudioConstraints(
+            bpm_min=raw_constraints.get("bpm_min"),
+            bpm_max=raw_constraints.get("bpm_max"),
+            energy_max=raw_constraints.get("energy_max"),
+            acousticness_min=raw_constraints.get("acousticness_min"),
+        )
+        # Only keep if at least one field was actually populated
+        if any(v is not None for v in candidate.model_dump().values()):
+            audio_constraints = candidate
+
     return AnalyzePromptResponse(
         suggested_genres=suggested_genres,
         suggested_decades=suggested_decades,
@@ -113,6 +146,7 @@ Suggest genres and decades from the available options that best match the user's
         reasoning=data.get("reasoning", ""),
         token_count=response.total_tokens,
         estimated_cost=response.estimated_cost(),
+        audio_constraints=audio_constraints,
     )
 
 

@@ -10,6 +10,10 @@ from collections.abc import Generator
 from datetime import datetime
 from datetime import date as _date
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.models import AudioConstraints
 
 from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
@@ -276,6 +280,7 @@ def _get_tracks_from_cache(
     exclude_live: bool,
     min_rating: int,
     max_tracks_to_ai: int,
+    audio_constraints: "AudioConstraints | None" = None,
 ) -> list[Track]:
     """Get tracks from local library cache.
 
@@ -292,7 +297,24 @@ def _get_tracks_from_cache(
             min_rating=min_rating,
             exclude_live=exclude_live,
             limit=effective_limit,
+            audio_constraints=audio_constraints,
         )
+
+        # Fallback: if audio constraints reduced the pool too aggressively, ignore them
+        if audio_constraints is not None and len(cached_tracks) < 50:
+            logger.warning(
+                "Audio constraints produced only %d tracks (< 50) — ignoring audio constraints",
+                len(cached_tracks),
+            )
+            cached_tracks = library_cache.get_tracks_by_filters(
+                genres=genres,
+                decades=decades,
+                min_rating=min_rating,
+                exclude_live=exclude_live,
+                limit=effective_limit,
+                audio_constraints=None,
+            )
+
         return [_cached_track_to_model(t) for t in cached_tracks]
 
     logger.warning("Library cache is empty — no tracks available")
@@ -351,6 +373,7 @@ def generate_playlist_stream(
     exclude_live: bool = True,
     min_rating: int = 0,
     max_tracks_to_ai: int = 500,
+    audio_constraints: "AudioConstraints | None" = None,
 ) -> Generator[str, None, None]:
     """Generate a playlist with streaming progress updates.
 
@@ -384,6 +407,7 @@ def generate_playlist_stream(
             exclude_live=exclude_live,
             min_rating=min_rating,
             max_tracks_to_ai=pool_size,
+            audio_constraints=audio_constraints,
         )
 
         if not raw_pool:

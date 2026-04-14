@@ -89,3 +89,119 @@ def test_get_audio_extraction_state(conn):
     assert "current" in state
     assert "total" in state
     assert "is_extracting" in state
+
+
+from backend.models import AudioConstraints
+
+
+def _insert_track(conn, gerbera_id, bpm=None, energy=None, acousticness=None, **kwargs):
+    """Helper: insert a minimal track row."""
+    conn.execute(
+        "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, bpm, energy, acousticness) "
+        "VALUES (?, ?, ?, ?, '[]', '/f.mp3', ?, ?, ?)",
+        (gerbera_id, kwargs.get("title", "T"), kwargs.get("artist", "A"), kwargs.get("album", "B"),
+         bpm, energy, acousticness),
+    )
+    conn.commit()
+
+
+def test_get_tracks_by_filters_bpm_constraint(conn):
+    """Audio constraint bpm_max filters extracted tracks; NULL tracks always pass."""
+    _insert_track(conn, 1, bpm=150.0, energy=0.5, acousticness=0.5)  # too fast
+    _insert_track(conn, 2, bpm=90.0, energy=0.5, acousticness=0.5)   # fits
+    _insert_track(conn, 3)  # no extraction yet → always included
+
+    from backend import library_cache
+    constraints = AudioConstraints(bpm_max=100)
+    result = library_cache.get_tracks_by_filters(audio_constraints=constraints)
+    ids = {r["gerbera_id"] for r in result}
+    assert 1 not in ids    # filtered out (bpm 150 > 100)
+    assert 2 in ids        # passes
+    assert 3 in ids        # NULL → always included
+
+
+def test_get_tracks_by_filters_energy_constraint(conn):
+    """energy_max filters tracks above threshold; NULL tracks pass."""
+    _insert_track(conn, 1, bpm=90.0, energy=0.8, acousticness=0.5)  # too loud
+    _insert_track(conn, 2, bpm=90.0, energy=0.3, acousticness=0.5)  # quiet enough
+    _insert_track(conn, 3)
+
+    from backend import library_cache
+    constraints = AudioConstraints(energy_max=0.5)
+    result = library_cache.get_tracks_by_filters(audio_constraints=constraints)
+    ids = {r["gerbera_id"] for r in result}
+    assert 1 not in ids
+    assert 2 in ids
+    assert 3 in ids
+
+
+def test_get_tracks_by_filters_acousticness_constraint(conn):
+    """acousticness_min filters electric tracks; NULL tracks pass."""
+    _insert_track(conn, 1, bpm=90.0, energy=0.3, acousticness=0.2)  # electric
+    _insert_track(conn, 2, bpm=90.0, energy=0.3, acousticness=0.8)  # acoustic
+    _insert_track(conn, 3)
+
+    from backend import library_cache
+    constraints = AudioConstraints(acousticness_min=0.6)
+    result = library_cache.get_tracks_by_filters(audio_constraints=constraints)
+    ids = {r["gerbera_id"] for r in result}
+    assert 1 not in ids
+    assert 2 in ids
+    assert 3 in ids
+
+
+def test_count_tracks_by_filters_with_audio_constraints(conn):
+    """count_tracks_by_filters respects audio_constraints."""
+    _insert_track(conn, 1, bpm=150.0, energy=0.5, acousticness=0.5)
+    _insert_track(conn, 2, bpm=90.0, energy=0.5, acousticness=0.5)
+    _insert_track(conn, 3)  # NULL
+
+    from backend import library_cache
+    constraints = AudioConstraints(bpm_max=100)
+    count = library_cache.count_tracks_by_filters(audio_constraints=constraints)
+    assert count == 2  # track 2 + track 3 (NULL)
+
+
+def test_get_tracks_by_filters_bpm_min_constraint(conn):
+    """bpm_min filters tracks below threshold; NULL tracks always pass."""
+    _insert_track(conn, 1, bpm=60.0, energy=0.5, acousticness=0.5)   # too slow
+    _insert_track(conn, 2, bpm=130.0, energy=0.5, acousticness=0.5)  # fast enough
+    _insert_track(conn, 3)  # NULL → always included
+
+    from backend import library_cache
+    constraints = AudioConstraints(bpm_min=80)
+    result = library_cache.get_tracks_by_filters(audio_constraints=constraints)
+    ids = {r["gerbera_id"] for r in result}
+    assert 1 not in ids    # filtered out (bpm 60 < 80)
+    assert 2 in ids        # passes
+    assert 3 in ids        # NULL → always included
+
+
+def test_count_tracks_by_filters_genre_and_audio_constraints(conn):
+    """count_tracks_by_filters with genres AND audio_constraints both applied."""
+    # Track 1: matching genre but bpm too high → excluded by audio
+    conn.execute(
+        "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, bpm) "
+        "VALUES (1, 'T', 'A', 'B', '[\"Rock\"]', '/a.mp3', 150.0)"
+    )
+    # Track 2: matching genre, bpm ok → included
+    conn.execute(
+        "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, bpm) "
+        "VALUES (2, 'T', 'A', 'B', '[\"Rock\"]', '/b.mp3', 90.0)"
+    )
+    # Track 3: wrong genre → excluded by genre filter
+    conn.execute(
+        "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path, bpm) "
+        "VALUES (3, 'T', 'A', 'B', '[\"Jazz\"]', '/c.mp3', 90.0)"
+    )
+    # Track 4: matching genre, bpm IS NULL → included (graceful degradation)
+    conn.execute(
+        "INSERT INTO tracks (gerbera_id, title, artist, album, genres, file_path) "
+        "VALUES (4, 'T', 'A', 'B', '[\"Rock\"]', '/d.mp3')"
+    )
+    conn.commit()
+
+    from backend import library_cache
+    constraints = AudioConstraints(bpm_max=100)
+    count = library_cache.count_tracks_by_filters(genres=["Rock"], audio_constraints=constraints)
+    assert count == 2  # track 2 (bpm ok) + track 4 (bpm NULL)

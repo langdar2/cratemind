@@ -14,7 +14,10 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    from backend.models import AudioConstraints
 
 from backend.gerbera_client import GerberaTrack
 
@@ -475,12 +478,37 @@ def get_cached_tracks() -> list[dict[str, Any]]:
         conn.close()
 
 
+def _apply_audio_constraints(
+    audio_constraints: "AudioConstraints",
+    conditions: list,
+    params: list,
+) -> None:
+    """Append SQL conditions for audio constraints to conditions/params lists.
+
+    Uses OR IS NULL for each constraint so tracks without extracted features
+    always pass (graceful degradation).
+    """
+    if audio_constraints.bpm_min is not None:
+        conditions.append("(bpm >= ? OR bpm IS NULL)")
+        params.append(audio_constraints.bpm_min)
+    if audio_constraints.bpm_max is not None:
+        conditions.append("(bpm <= ? OR bpm IS NULL)")
+        params.append(audio_constraints.bpm_max)
+    if audio_constraints.energy_max is not None:
+        conditions.append("(energy <= ? OR energy IS NULL)")
+        params.append(audio_constraints.energy_max)
+    if audio_constraints.acousticness_min is not None:
+        conditions.append("(acousticness >= ? OR acousticness IS NULL)")
+        params.append(audio_constraints.acousticness_min)
+
+
 def get_tracks_by_filters(
     genres: list[str] | None = None,
     decades: list[str] | None = None,
     min_rating: int = 0,
     exclude_live: bool = True,
     limit: int = 0,
+    audio_constraints: "AudioConstraints | None" = None,
 ) -> list[dict[str, Any]]:
     """Get tracks from cache matching filter criteria.
 
@@ -518,6 +546,10 @@ def get_tracks_by_filters(
                 params.extend([start_year, end_year])
             if decade_conditions:
                 conditions.append(f"({' OR '.join(decade_conditions)})")
+
+        # Audio constraints (graceful degradation: OR IS NULL includes tracks without extracted features)
+        if audio_constraints is not None:
+            _apply_audio_constraints(audio_constraints, conditions, params)
 
         # Build query
         where_clause = " AND ".join(conditions) if conditions else "1=1"
@@ -652,6 +684,7 @@ def count_tracks_by_filters(
     decades: list[str] | None = None,
     min_rating: int = 0,
     exclude_live: bool = True,
+    audio_constraints: "AudioConstraints | None" = None,
 ) -> int:
     """Count tracks matching filter criteria without fetching full data.
 
@@ -664,12 +697,12 @@ def count_tracks_by_filters(
     Returns:
         Count of matching tracks, or -1 if cache is empty
     """
-    state = get_sync_state()
-    if state["track_count"] == 0:
-        return -1  # Cache empty, signal to use Plex
-
     conn = ensure_db_initialized()
     try:
+        total = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        if total == 0:
+            return -1  # Cache empty, signal to use Plex
+
         conditions = []
         params: list[Any] = []
 
@@ -691,6 +724,10 @@ def count_tracks_by_filters(
                 params.extend([start_year, end_year])
             if decade_conditions:
                 conditions.append(f"({' OR '.join(decade_conditions)})")
+
+        # Audio constraints (graceful degradation: OR IS NULL includes tracks without extracted features)
+        if audio_constraints is not None:
+            _apply_audio_constraints(audio_constraints, conditions, params)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
