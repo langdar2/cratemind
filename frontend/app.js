@@ -5711,6 +5711,13 @@ async function loadLibraryView() {
   renderLibrary();
 }
 
+function audioExtractionBadgeHtml(audioExtracted, trackCount) {
+  const pct = trackCount > 0 ? audioExtracted / trackCount : 0;
+  const cls = pct === 1 ? 'green' : pct > 0 ? 'yellow' : 'red';
+  const label = `${audioExtracted} / ${trackCount} Tracks analysiert`;
+  return `<span class="lib-audio-dot lib-audio-dot--${cls}" title="${label}" aria-label="${label}"></span>`;
+}
+
 function renderLibrary() {
   const tab = state.library.tab;
   const items = tab === 'artists' ? state.library.artists : state.library.albums;
@@ -5740,6 +5747,7 @@ function renderLibrary() {
           <div class="lib-card-title">${escapeHtml(title)}${newBadge}</div>
           ${subtitle}
         </div>
+        ${audioExtractionBadgeHtml(item.audio_extracted ?? 0, item.track_count)}
         <span class="lib-track-count">${item.track_count}</span>
       </div>`;
   }).join('');
