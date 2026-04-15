@@ -4125,6 +4125,13 @@ body.no-scroll {
   margin-left: auto;
 }
 
+.lib-audio-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
 .lib-audio-dot {
   display: inline-block;
   width: 8px;
@@ -4136,6 +4143,23 @@ body.no-scroll {
 .lib-audio-dot--green  { background: #4caf50; }
 .lib-audio-dot--yellow { background: #e5a00d; }
 .lib-audio-dot--red    { background: #e53935; }
+
+.lib-audio-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lib-sync-status {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.lib-sync-status--error {
+  color: #e53935;
+  cursor: default;
+}
 
 .lib-footer {
   display: flex;

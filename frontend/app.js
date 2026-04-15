@@ -5685,6 +5685,32 @@ function setupWizardEventListeners() {
 // Library View (Tasks 7-9)
 // =============================================================================
 
+function updateLibSyncStatus(status) {
+  const el = document.getElementById('lib-sync-status');
+  if (!el) return;
+  if (status.error) {
+    el.className = 'lib-sync-status lib-sync-status--error';
+    el.textContent = `Fehler: ${status.error}`;
+    el.title = status.error;
+  } else if (status.is_syncing) {
+    el.className = 'lib-sync-status';
+    el.title = '';
+    if (status.sync_progress && status.sync_progress.total > 0) {
+      el.textContent = `Syncing… ${status.sync_progress.current} / ${status.sync_progress.total}`;
+    } else {
+      el.textContent = 'Syncing…';
+    }
+  } else if (status.synced_at) {
+    el.className = 'lib-sync-status';
+    el.title = '';
+    const d = new Date(status.synced_at);
+    el.textContent = `Zuletzt: ${d.toLocaleString('de-DE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  } else {
+    el.textContent = '';
+    el.title = '';
+  }
+}
+
 async function loadLibraryView() {
   if (state.library.artists.length > 0 || state.library.albums.length > 0) {
     renderLibrary();
@@ -5695,12 +5721,14 @@ async function loadLibraryView() {
   document.getElementById('lib-list').innerHTML = '';
 
   try {
-    const [artistsData, albumsData] = await Promise.all([
+    const [artistsData, albumsData, libStatus] = await Promise.all([
       apiCall('/library/artists'),
       apiCall('/library/albums'),
+      fetchLibraryStatus(),
     ]);
     state.library.artists = artistsData.artists;
     state.library.albums = albumsData.albums;
+    updateLibSyncStatus(libStatus);
   } catch (e) {
     document.getElementById('lib-loading').textContent = 'Fehler beim Laden der Bibliothek.';
     return;
@@ -5715,7 +5743,10 @@ function audioExtractionBadgeHtml(audioExtracted, trackCount) {
   const pct = trackCount > 0 ? audioExtracted / trackCount : 0;
   const cls = pct === 1 ? 'green' : pct > 0 ? 'yellow' : 'red';
   const label = `${Number(audioExtracted)} / ${Number(trackCount)} Tracks analysiert`;
-  return `<span class="lib-audio-dot lib-audio-dot--${cls}" title="${label}" aria-label="${label}"></span>`;
+  return `<span class="lib-audio-badge" aria-label="${label}">` +
+    `<span class="lib-audio-dot lib-audio-dot--${cls}"></span>` +
+    `<span class="lib-audio-count">${Number(audioExtracted)}/${Number(trackCount)}</span>` +
+    `</span>`;
 }
 
 function renderLibrary() {
@@ -5866,6 +5897,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         while (true) {
           await new Promise(r => setTimeout(r, 2000));
           const status = await apiCall('/library/status');
+          updateLibSyncStatus(status);
           if (!status.is_syncing) break;
         }
         // Reload library data
@@ -5874,6 +5906,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadLibraryView();
       } catch (e) {
         console.error('Sync failed', e);
+        updateLibSyncStatus({ is_syncing: false, error: e.message || 'Unbekannter Fehler' });
       } finally {
         btn.disabled = false;
         btn.textContent = 'Sync';
