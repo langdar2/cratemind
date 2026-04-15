@@ -8,13 +8,15 @@ Extracts 5 acoustic features per track from the first AUDIO_LOAD_DURATION second
   - acousticness: harmonic/total energy ratio via HPSS (0=electric, 1=acoustic)
 """
 
+import gc
 import io
 import logging
+import os
 import subprocess
 import threading
+import time
 
 import numpy as np
-import soundfile as sf
 import librosa
 
 from backend import library_cache
@@ -88,14 +90,10 @@ def extract_features_for_file(file_path: str) -> dict[str, float]:
     zcr = librosa.feature.zero_crossing_rate(y)
     zero_crossing_rate = float(np.mean(zcr))
 
-    # Acousticness via HPSS: ratio of harmonic energy to total energy
-    y_harmonic, _ = librosa.effects.hpss(y)
-    harmonic_energy = float(np.mean(y_harmonic ** 2))
-    total_energy = float(np.mean(y ** 2))
-    if total_energy > 0:
-        acousticness = min(1.0, max(0.0, harmonic_energy / total_energy))
-    else:
-        acousticness = 0.0
+    # Acousticness via spectral flatness: flat spectrum = noise/electric,
+    # tonal spectrum = acoustic. Inverted and scaled to 0-1.
+    flatness = librosa.feature.spectral_flatness(y=y)
+    acousticness = float(1.0 - min(1.0, max(0.0, np.mean(flatness) * 10)))
 
     return {
         "bpm": bpm,
@@ -113,6 +111,12 @@ def _run_extraction() -> None:
     Skips unreadable files and logs warnings without stopping.
     """
     try:
+        # Lower scheduling priority so extraction doesn't starve the rest of the system
+        try:
+            os.nice(10)
+        except OSError:
+            pass
+
         tracks = library_cache.get_tracks_without_audio_features()
         total = len(tracks)
         logger.info("Audio extraction started: %d tracks to process", total)
@@ -139,6 +143,11 @@ def _run_extraction() -> None:
                     "Audio extraction failed for gerbera_id=%d path=%s: %s",
                     gerbera_id, file_path, exc,
                 )
+            finally:
+                gc.collect()
+
+            # Brief pause so extraction doesn't saturate CPU/IO continuously
+            time.sleep(0.05)
 
             # Update progress every 50 tracks
             if (i + 1) % 50 == 0 or (i + 1) == total:
