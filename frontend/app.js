@@ -5856,6 +5856,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       renderLibrary();
     });
 
+    document.getElementById('lib-sync-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('lib-sync-btn');
+      btn.disabled = true;
+      btn.textContent = 'Syncing…';
+      try {
+        await triggerLibrarySync();
+        // Wait for sync to finish by polling status
+        while (true) {
+          await new Promise(r => setTimeout(r, 2000));
+          const status = await apiCall('/library/status');
+          if (!status.is_syncing) break;
+        }
+        // Reload library data
+        state.library.artists = [];
+        state.library.albums = [];
+        await loadLibraryView();
+      } catch (e) {
+        console.error('Sync failed', e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sync';
+      }
+    });
+
     document.getElementById('lib-list').addEventListener('click', e => {
       const btn = e.target.closest('.lib-heart');
       if (!btn) return;
