@@ -8,10 +8,13 @@ Extracts 5 acoustic features per track from the first AUDIO_LOAD_DURATION second
   - acousticness: harmonic/total energy ratio via HPSS (0=electric, 1=acoustic)
 """
 
+import io
 import logging
+import subprocess
 import threading
 
 import numpy as np
+import soundfile as sf
 import librosa
 
 from backend import library_cache
@@ -20,6 +23,37 @@ logger = logging.getLogger(__name__)
 
 # Load only the first N seconds of each file for speed (~0.8s/track at 60s)
 AUDIO_LOAD_DURATION = 60  # seconds
+
+
+_LIBROSA_SR = 22050  # native librosa sample rate
+
+
+def _load_audio(file_path: str, duration: float) -> tuple[np.ndarray, int]:
+    """Load audio as a mono float32 array at librosa's native sample rate.
+
+    Tries soundfile first (fast, no warnings). Falls back to ffmpeg for formats
+    soundfile can't handle (MP3, M4A, AAC, etc.) — avoids the deprecated
+    audioread path in librosa >= 0.10.
+    """
+    try:
+        y, sr = librosa.load(file_path, duration=duration, mono=True, sr=_LIBROSA_SR)
+        return y, sr
+    except Exception:
+        pass
+
+    # soundfile couldn't read the file — decode via ffmpeg to raw PCM
+    cmd = [
+        "ffmpeg", "-v", "quiet",
+        "-i", file_path,
+        "-t", str(duration),
+        "-f", "f32le",       # raw 32-bit float little-endian PCM
+        "-ar", str(_LIBROSA_SR),
+        "-ac", "1",          # mono
+        "pipe:1",
+    ]
+    result = subprocess.run(cmd, capture_output=True, check=True)
+    y = np.frombuffer(result.stdout, dtype=np.float32)
+    return y, _LIBROSA_SR
 
 
 def extract_features_for_file(file_path: str) -> dict[str, float]:
@@ -36,7 +70,7 @@ def extract_features_for_file(file_path: str) -> dict[str, float]:
     Raises:
         Exception: Re-raises any librosa/IO errors so the caller can skip + log.
     """
-    y, sr = librosa.load(file_path, duration=AUDIO_LOAD_DURATION, mono=True)
+    y, sr = _load_audio(file_path, duration=AUDIO_LOAD_DURATION)
 
     # BPM
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
