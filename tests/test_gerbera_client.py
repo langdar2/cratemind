@@ -14,7 +14,8 @@ def _create_test_db(path: str) -> None:
             parent_id INTEGER NOT NULL DEFAULT 0,
             upnp_class VARCHAR(80),
             dc_title VARCHAR(255),
-            location TEXT
+            location TEXT,
+            mime_type VARCHAR(80)
         );
         CREATE TABLE mt_metadata (
             id INTEGER PRIMARY KEY,
@@ -38,9 +39,9 @@ def _create_test_db(path: str) -> None:
         );
     """)
     conn.execute("""
-        INSERT INTO mt_cds_object (id, ref_id, upnp_class, dc_title, location)
+        INSERT INTO mt_cds_object (id, ref_id, upnp_class, dc_title, location, mime_type)
         VALUES (1, NULL, 'object.item.audioItem.musicTrack',
-                'So What', '/music/miles_davis/kind_of_blue/01_so_what.flac')
+                'So What', '/music/miles_davis/kind_of_blue/01_so_what.flac', 'audio/flac')
     """)
     for name, value in [
         ("upnp:artist", "Miles Davis"),
@@ -90,8 +91,8 @@ def test_read_tracks_skips_virtual_refs():
         _create_test_db(db_path)
         conn = sqlite3.connect(db_path)
         conn.execute("""
-            INSERT INTO mt_cds_object (id, ref_id, upnp_class, dc_title, location)
-            VALUES (2, 1, 'object.item.audioItem.musicTrack', 'So What (copy)', '/music/copy.flac')
+            INSERT INTO mt_cds_object (id, ref_id, upnp_class, dc_title, location, mime_type)
+            VALUES (2, 1, 'object.item.audioItem.musicTrack', 'So What (copy)', '/music/copy.flac', 'audio/flac')
         """)
         conn.commit()
         conn.close()

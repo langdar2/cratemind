@@ -89,6 +89,7 @@ def read_tracks(db_path: str) -> list[GerberaTrack]:
                 GROUP BY item_id
             ) ps ON ps.item_id = o.id
             WHERE o.mime_type LIKE 'audio%'
+              AND o.ref_id IS NULL
               AND o.location IS NOT NULL
             GROUP BY o.id
         """)

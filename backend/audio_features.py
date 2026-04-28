@@ -15,6 +15,7 @@ import os
 import subprocess
 import threading
 import time
+import warnings
 
 import numpy as np
 import librosa
@@ -38,7 +39,9 @@ def _load_audio(file_path: str, duration: float) -> tuple[np.ndarray, int]:
     audioread path in librosa >= 0.10.
     """
     try:
-        y, sr = librosa.load(file_path, duration=duration, mono=True, sr=_LIBROSA_SR)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*__audioread_load.*", category=FutureWarning)
+            y, sr = librosa.load(file_path, duration=duration, mono=True, sr=_LIBROSA_SR)
         return y, sr
     except Exception:
         pass
