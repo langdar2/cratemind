@@ -32,6 +32,7 @@ from backend.models import (
     AnalyzeTrackRequest,
     AnalyzeTrackResponse,
     ArtistStat,
+    CheckFilesResponse,
     ConfigResponse,
     DecadeCount,
     FilterPreviewRequest,
@@ -44,6 +45,7 @@ from backend.models import (
     LibraryArtistsResponse,
     LibraryCacheStatusResponse,
     LibraryStatsResponse,
+    MissingFileTrack,
     OllamaModelInfo,
     OllamaModelsResponse,
     OllamaStatus,
@@ -64,6 +66,9 @@ from backend.models import (
     AudioExtractionStatusResponse,
     SyncProgress,
     SyncTriggerResponse,
+    TidalLoginResponse,
+    TidalLookupResponse,
+    TidalStatusResponse,
     ToggleFavoriteRequest,
     TrackFeedbackListResponse,
     TrackFeedbackRequest,
@@ -640,6 +645,80 @@ async def patch_album_artists():
         )
 
     return {"status": "ok", "tracks_read": len(album_artists), "tracks_updated": updated}
+
+
+# =============================================================================
+# File Integrity Check & Tidal Endpoints
+# =============================================================================
+
+
+@app.get("/api/library/check-files", response_model=CheckFilesResponse)
+async def check_library_files() -> CheckFilesResponse:
+    """Check which cached tracks have missing audio files on disk."""
+    missing = await asyncio.to_thread(library_cache.get_missing_files)
+    total = await asyncio.to_thread(library_cache.get_track_count)
+    return CheckFilesResponse(
+        total_tracks=total,
+        missing_count=len(missing),
+        missing=[MissingFileTrack(**t) for t in missing],
+    )
+
+
+@app.post("/api/tidal/login", response_model=TidalLoginResponse)
+async def tidal_login() -> TidalLoginResponse:
+    """Start Tidal OAuth device-code login flow."""
+    from backend import tidal_client
+
+    try:
+        result = await asyncio.to_thread(tidal_client.start_login)
+        return TidalLoginResponse(
+            verification_uri=result["verification_uri"],
+            expires_in=result["expires_in"],
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tidal/status", response_model=TidalStatusResponse)
+async def tidal_status() -> TidalStatusResponse:
+    """Check Tidal login status (also used for polling during login flow)."""
+    from backend import tidal_client
+
+    try:
+        result = await asyncio.to_thread(tidal_client.check_login_complete)
+        return TidalStatusResponse(**result)
+    except RuntimeError:
+        return TidalStatusResponse(logged_in=False)
+
+
+@app.post("/api/tidal/logout")
+async def tidal_logout():
+    """Clear Tidal session."""
+    from backend import tidal_client
+
+    await asyncio.to_thread(tidal_client.logout)
+    return {"status": "ok"}
+
+
+@app.post("/api/library/tidal-lookup", response_model=TidalLookupResponse)
+async def tidal_lookup_missing() -> TidalLookupResponse:
+    """Search Tidal for all tracks with missing files."""
+    from backend import tidal_client
+
+    if not await asyncio.to_thread(tidal_client.is_logged_in):
+        raise HTTPException(status_code=401, detail="Nicht bei Tidal eingeloggt")
+
+    missing = await asyncio.to_thread(library_cache.get_missing_files)
+    if not missing:
+        return TidalLookupResponse(total=0, found=0, tracks=[])
+
+    enriched = await asyncio.to_thread(tidal_client.search_tracks_batch, missing)
+    found = sum(1 for t in enriched if t.get("tidal_id"))
+    return TidalLookupResponse(
+        total=len(enriched),
+        found=found,
+        tracks=[MissingFileTrack(**t) for t in enriched],
+    )
 
 
 # =============================================================================

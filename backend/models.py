@@ -565,6 +565,59 @@ class AudioExtractionStatusResponse(BaseModel):
 
 
 # =============================================================================
+# File Integrity & Tidal Models
+# =============================================================================
+
+
+class MissingFileTrack(BaseModel):
+    """A cached track whose audio file is missing from disk."""
+
+    gerbera_id: int
+    title: str
+    artist: str
+    album: str
+    year: int | None = None
+    file_path: str
+    tidal_id: int | None = None
+    tidal_url: str | None = None
+    tidal_title: str | None = None
+    tidal_artist: str | None = None
+
+
+class CheckFilesResponse(BaseModel):
+    """Response from GET /api/library/check-files."""
+
+    total_tracks: int
+    missing_count: int
+    missing: list[MissingFileTrack]
+
+
+class TidalLoginResponse(BaseModel):
+    """Response from POST /api/tidal/login."""
+
+    verification_uri: str | None = None
+    expires_in: int | None = None
+    logged_in: bool = False
+
+
+class TidalStatusResponse(BaseModel):
+    """Response from GET /api/tidal/status."""
+
+    logged_in: bool
+    waiting: bool = False
+    verification_uri: str | None = None
+    error: str | None = None
+
+
+class TidalLookupResponse(BaseModel):
+    """Response from POST /api/library/tidal-lookup."""
+
+    total: int
+    found: int
+    tracks: list[MissingFileTrack]
+
+
+# =============================================================================
 # Recommendation Models (006)
 # =============================================================================
 

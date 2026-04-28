@@ -16,3 +16,4 @@ readability-lxml
 implicit
 scipy
 librosa
+tidalapi

@@ -1393,6 +1393,85 @@ textarea {
     color: var(--error);
 }
 
+/* Missing files table */
+.missing-files-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-sm);
+}
+
+.missing-files-header h4 {
+    margin: 0;
+    font-size: var(--font-size-base);
+}
+
+.missing-files-table-wrap {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+
+.missing-files-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+}
+
+.missing-files-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.missing-files-table th {
+    background: var(--bg-tertiary);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+}
+
+.missing-files-table td {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-bottom: 1px solid var(--border);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.missing-files-table tr:hover td {
+    background: var(--bg-tertiary);
+}
+
+.missing-files-table a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.missing-files-table a:hover {
+    text-decoration: underline;
+}
+
+.btn-sm {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--font-size-sm);
+}
+
+/* Tidal auth link */
+.tidal-auth-link {
+    display: inline-block;
+    color: var(--accent);
+    font-weight: 500;
+    word-break: break-all;
+}
+
+.tidal-auth-link:hover {
+    text-decoration: underline;
+}
+
 .status-indicator {
     display: flex;
     align-items: center;

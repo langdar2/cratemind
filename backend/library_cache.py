@@ -450,6 +450,40 @@ def apply_album_artist_patch(album_artists: dict[int, str]) -> int:
         conn.close()
 
 
+def get_missing_files() -> list[dict[str, Any]]:
+    """Check all cached tracks and return those whose file_path does not exist on disk.
+
+    Returns:
+        List of track dicts (gerbera_id, title, artist, album, year, file_path)
+        for tracks where the audio file is missing.
+    """
+    conn = ensure_db_initialized()
+    try:
+        rows = conn.execute(
+            "SELECT gerbera_id, title, artist, album, year, file_path FROM tracks "
+            "WHERE file_path IS NOT NULL ORDER BY artist, album, title"
+        ).fetchall()
+
+        missing = []
+        for row in rows:
+            fp = row["file_path"]
+            if fp and not Path(fp).exists():
+                missing.append(dict(row))
+        return missing
+    finally:
+        conn.close()
+
+
+def get_track_count() -> int:
+    """Return total number of tracks in the cache."""
+    conn = ensure_db_initialized()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM tracks").fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
 def get_cached_tracks() -> list[dict[str, Any]]:
     """Get all tracks from cache.
 

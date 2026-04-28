@@ -2797,6 +2797,16 @@ function setupEventListeners() {
     // AlbumArtist patch button
     document.getElementById('patch-album-artists-btn').addEventListener('click', handlePatchAlbumArtists);
 
+    // File integrity check button
+    document.getElementById('check-files-btn').addEventListener('click', handleCheckFiles);
+
+    // Tidal lookup button
+    document.getElementById('tidal-lookup-btn').addEventListener('click', handleTidalLookup);
+
+    // Tidal login/logout buttons
+    document.getElementById('tidal-login-btn').addEventListener('click', handleTidalLogin);
+    document.getElementById('tidal-logout-btn').addEventListener('click', handleTidalLogout);
+
     // Success modal - Start New Playlist
     document.getElementById('new-playlist-btn').addEventListener('click', hideSuccessModal);
 
@@ -3519,6 +3529,8 @@ async function loadSettings() {
             const statsSection = document.getElementById('library-stats-section');
             statsSection.style.display = 'block';
             document.getElementById('library-tools-section').style.display = 'block';
+            document.getElementById('tidal-section').style.display = 'block';
+            initTidalStatus();
 
             try {
                 const stats = await fetchLibraryStats();
@@ -3637,6 +3649,189 @@ async function handlePatchAlbumArtists() {
         btn.disabled = false;
         btn.textContent = 'AlbumArtist-Patch anwenden';
     }
+}
+
+// =============================================================================
+// File Integrity Check & Tidal Integration
+// =============================================================================
+
+async function handleCheckFiles() {
+    const btn = document.getElementById('check-files-btn');
+    const result = document.getElementById('check-files-result');
+    const section = document.getElementById('missing-files-section');
+    btn.disabled = true;
+    btn.textContent = 'Prüfe Dateien…';
+    result.classList.add('hidden');
+    section.classList.add('hidden');
+
+    try {
+        const data = await apiCall('/library/check-files');
+        if (data.missing_count === 0) {
+            result.textContent = `Alle ${data.total_tracks} Dateien vorhanden ✓`;
+            result.className = 'patch-result patch-result--ok';
+        } else {
+            result.textContent = `${data.missing_count} von ${data.total_tracks} Dateien fehlen`;
+            result.className = 'patch-result patch-result--error';
+            renderMissingFiles(data.missing);
+        }
+    } catch (error) {
+        result.textContent = 'Fehler: ' + error.message;
+        result.className = 'patch-result patch-result--error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Datei-Abgleich starten';
+    }
+}
+
+function renderMissingFiles(tracks) {
+    const section = document.getElementById('missing-files-section');
+    const title = document.getElementById('missing-files-title');
+    const tbody = document.getElementById('missing-files-tbody');
+    const tidalBtn = document.getElementById('tidal-lookup-btn');
+
+    title.textContent = `${tracks.length} fehlende Dateien`;
+    tbody.innerHTML = '';
+
+    for (const t of tracks) {
+        const row = document.createElement('tr');
+        const tidalCell = t.tidal_url
+            ? `<a href="${t.tidal_url}" target="_blank" rel="noopener" title="${t.tidal_artist} – ${t.tidal_title}">↗ Tidal</a>`
+            : '<span style="color: var(--text-muted);">—</span>';
+        row.innerHTML = `
+            <td title="${escapeHtml(t.artist)}">${escapeHtml(t.artist)}</td>
+            <td title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</td>
+            <td title="${escapeHtml(t.album)}">${escapeHtml(t.album)}</td>
+            <td>${t.year || '—'}</td>
+            <td>${tidalCell}</td>
+        `;
+        tbody.appendChild(row);
+    }
+
+    // Show/hide Tidal lookup button based on login status
+    checkTidalStatusForButton();
+    section.classList.remove('hidden');
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+async function checkTidalStatusForButton() {
+    const tidalBtn = document.getElementById('tidal-lookup-btn');
+    try {
+        const status = await apiCall('/tidal/status');
+        if (status.logged_in) {
+            tidalBtn.classList.remove('hidden');
+        } else {
+            tidalBtn.classList.add('hidden');
+        }
+    } catch {
+        tidalBtn.classList.add('hidden');
+    }
+}
+
+async function handleTidalLookup() {
+    const btn = document.getElementById('tidal-lookup-btn');
+    btn.disabled = true;
+    btn.textContent = 'Suche auf Tidal…';
+
+    try {
+        const data = await apiCall('/library/tidal-lookup', { method: 'POST' });
+        btn.textContent = `${data.found} von ${data.total} gefunden`;
+        renderMissingFiles(data.tracks);
+    } catch (error) {
+        showError('Tidal-Suche fehlgeschlagen: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        setTimeout(() => { btn.textContent = 'Auf Tidal suchen'; }, 3000);
+    }
+}
+
+let _tidalPollTimer = null;
+
+async function handleTidalLogin() {
+    const loginBtn = document.getElementById('tidal-login-btn');
+    const instructions = document.getElementById('tidal-auth-instructions');
+    const link = document.getElementById('tidal-auth-link');
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Wird gestartet…';
+
+    try {
+        const data = await apiCall('/tidal/login', { method: 'POST' });
+        if (data.verification_uri) {
+            link.href = data.verification_uri;
+            link.textContent = data.verification_uri;
+            instructions.classList.remove('hidden');
+            loginBtn.classList.add('hidden');
+            startTidalPoll();
+        }
+    } catch (error) {
+        showError('Tidal-Login fehlgeschlagen: ' + error.message);
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Bei Tidal einloggen';
+    }
+}
+
+function startTidalPoll() {
+    if (_tidalPollTimer) clearInterval(_tidalPollTimer);
+    _tidalPollTimer = setInterval(async () => {
+        try {
+            const status = await apiCall('/tidal/status');
+            if (status.logged_in) {
+                clearInterval(_tidalPollTimer);
+                _tidalPollTimer = null;
+                updateTidalUI(true);
+            }
+        } catch { /* ignore */ }
+    }, 3000);
+}
+
+function updateTidalUI(loggedIn) {
+    const loginBtn = document.getElementById('tidal-login-btn');
+    const logoutBtn = document.getElementById('tidal-logout-btn');
+    const instructions = document.getElementById('tidal-auth-instructions');
+    const statusEl = document.getElementById('tidal-status');
+    const dot = statusEl.querySelector('.status-dot');
+    const text = statusEl.querySelector('.status-text');
+
+    instructions.classList.add('hidden');
+
+    if (loggedIn) {
+        loginBtn.classList.add('hidden');
+        logoutBtn.classList.remove('hidden');
+        statusEl.className = 'status-indicator connected';
+        text.textContent = 'Verbunden';
+    } else {
+        loginBtn.classList.remove('hidden');
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Bei Tidal einloggen';
+        logoutBtn.classList.add('hidden');
+        statusEl.className = 'status-indicator';
+        text.textContent = 'Nicht verbunden';
+    }
+    checkTidalStatusForButton();
+}
+
+async function handleTidalLogout() {
+    try {
+        await apiCall('/tidal/logout', { method: 'POST' });
+        updateTidalUI(false);
+    } catch (error) {
+        showError('Fehler beim Trennen: ' + error.message);
+    }
+}
+
+async function initTidalStatus() {
+    try {
+        const status = await apiCall('/tidal/status');
+        updateTidalUI(status.logged_in);
+        if (status.waiting) {
+            startTidalPoll();
+        }
+    } catch { /* tidalapi not installed — hide section */ }
 }
 
 // =============================================================================
