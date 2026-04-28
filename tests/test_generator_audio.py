@@ -61,7 +61,7 @@ def test_audio_constraints_dropped_when_pool_too_small():
          patch("backend.generator.library_cache.get_tracks_by_filters",
                side_effect=mock_get_tracks):
         from backend.generator import _get_tracks_from_cache
-        result = _get_tracks_from_cache(
+        result, audio_dropped = _get_tracks_from_cache(
             genres=None, decades=None, exclude_live=True,
             min_rating=0, max_tracks_to_ai=500,
             audio_constraints=constraints,
@@ -69,3 +69,4 @@ def test_audio_constraints_dropped_when_pool_too_small():
 
     assert call_count["n"] == 2    # retried without constraints
     assert len(result) == 100
+    assert audio_dropped is True

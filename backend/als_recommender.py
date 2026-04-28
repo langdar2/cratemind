@@ -37,6 +37,23 @@ def _play_count(track: Any) -> int:
     return int(track.get("play_count") or 0)
 
 
+class _RestrictedUnpickler(pickle.Unpickler):
+    """Only allow unpickling ALS model objects — blocks arbitrary code execution."""
+    _ALLOWED_MODULES = frozenset({
+        "implicit.als", "implicit.cpu.als", "implicit.gpu.als",
+        "numpy", "numpy.core.multiarray", "numpy._core.multiarray",
+        "scipy.sparse", "scipy.sparse._csr", "scipy.sparse._csc",
+        "builtins", "collections",
+    })
+
+    def find_class(self, module: str, name: str):
+        if module in self._ALLOWED_MODULES:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(
+            f"Blocked unpickling from untrusted module: {module}.{name}"
+        )
+
+
 class ALSRecommender:
     """Lightweight ALS wrapper with safe fallback."""
 
@@ -53,18 +70,21 @@ class ALSRecommender:
     def load(cls) -> "ALSRecommender":
         """Return a new instance, restoring a previously saved model if found."""
         inst = cls()
-        if MODEL_PATH.exists():
-            try:
-                with MODEL_PATH.open("rb") as fh:
-                    data = pickle.load(fh)
-                inst._model = data["model"]
-                inst._item_ids = data["item_ids"]
-                inst._item_id_to_idx = {tid: i for i, tid in enumerate(inst._item_ids)}
-                logger.info(
-                    "ALS model loaded from %s (%d items)", MODEL_PATH, len(inst._item_ids)
-                )
-            except Exception as exc:  # corrupt pickle, version mismatch, …
-                logger.warning("Could not load ALS model: %s", exc)
+        try:
+            with MODEL_PATH.open("rb") as fh:
+                data = _RestrictedUnpickler(fh).load()
+            if not isinstance(data, dict) or "model" not in data or "item_ids" not in data:
+                raise ValueError("Invalid ALS model format")
+            inst._model = data["model"]
+            inst._item_ids = data["item_ids"]
+            inst._item_id_to_idx = {tid: i for i, tid in enumerate(inst._item_ids)}
+            logger.info(
+                "ALS model loaded from %s (%d items)", MODEL_PATH, len(inst._item_ids)
+            )
+        except FileNotFoundError:
+            pass  # No saved model yet
+        except Exception as exc:  # corrupt pickle, version mismatch, …
+            logger.warning("Could not load ALS model: %s", exc)
         return inst
 
     # ------------------------------------------------------------------

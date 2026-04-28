@@ -7,11 +7,13 @@ import os
 import random
 import re
 import threading
+import time as _time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from starlette.responses import StreamingResponse
@@ -97,6 +99,45 @@ from backend.generator import generate_playlist_stream, generate_favorites_playl
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("backend").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter for LLM endpoints (in-memory, per-IP sliding window)
+# ---------------------------------------------------------------------------
+
+class _RateLimiter:
+    """Simple in-memory per-IP sliding window rate limiter."""
+
+    def __init__(self, requests: int, window_seconds: int):
+        self.requests = requests
+        self.window = window_seconds
+        self._hits: dict[str, list[float]] = defaultdict(list)
+
+    def check(self, key: str) -> bool:
+        now = _time.monotonic()
+        hits = self._hits[key]
+        self._hits[key] = hits = [t for t in hits if now - t < self.window]
+        if len(hits) >= self.requests:
+            return False
+        hits.append(now)
+        return True
+
+
+_llm_limiter = _RateLimiter(requests=30, window_seconds=60)
+
+
+async def _rate_limit_llm(request: Request):
+    """Dependency that enforces per-IP rate limits on LLM-calling endpoints."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _llm_limiter.check(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Try again shortly.",
+        )
+
+
+# Lock to prevent concurrent ALS model training
+_als_training_lock = threading.Lock()
 
 
 @asynccontextmanager
@@ -373,13 +414,18 @@ async def setup_complete() -> SetupCompleteResponse:
 # =============================================================================
 
 
+_BROWSE_BLOCKED_PREFIXES = ("/proc", "/sys", "/dev", "/run")
+
+
 @app.get("/api/browse")
 async def browse_filesystem(
     path: str = Query("/", description="Directory path to list"),
     mode: str = Query("all", description="'file' shows files+dirs, 'dir' shows dirs only"),
 ):
     """List files and directories on the server filesystem for path-picker UI."""
-    abs_path = os.path.abspath(path)
+    abs_path = os.path.realpath(os.path.abspath(path))
+    if any(abs_path == p or abs_path.startswith(p + "/") for p in _BROWSE_BLOCKED_PREFIXES):
+        abs_path = "/"
     if not os.path.isdir(abs_path):
         abs_path = "/"
 
@@ -523,17 +569,32 @@ async def trigger_library_sync():
             library_cache.update_sync_state(is_syncing=False)
 
     try:
-        count = await asyncio.to_thread(_do_sync)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+        await asyncio.wait_for(asyncio.to_thread(_do_sync), timeout=600.0)
+    except asyncio.TimeoutError:
+        logger.error("Library sync timed out after 10 minutes")
+        raise HTTPException(
+            status_code=504,
+            detail="Library sync timed out. The Gerbera database may be locked or too large.",
+        )
+    except Exception:
+        logger.exception("Library sync failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Library sync failed. Check server logs for details.",
+        )
 
     # Retrain ALS model in background — non-blocking, safe to fail
     def _train_als() -> None:
+        if not _als_training_lock.acquire(blocking=False):
+            logger.info("ALS training already in progress — skipping")
+            return
         try:
             all_tracks = library_cache.get_tracks_by_filters(limit=0)
             _als_recommender.train(all_tracks)
         except Exception as exc:
             logger.warning("ALS training after sync failed: %s", exc)
+        finally:
+            _als_training_lock.release()
 
     threading.Thread(target=_train_als, daemon=True).start()
 
@@ -571,8 +632,12 @@ async def patch_album_artists():
     try:
         album_artists = await asyncio.to_thread(read_album_artists, config.gerbera.db_path)
         updated = await asyncio.to_thread(library_cache.apply_album_artist_patch, album_artists)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Patch failed: {e}")
+    except Exception:
+        logger.exception("Album artist patch failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Album artist patch failed. Check server logs for details.",
+        )
 
     return {"status": "ok", "tracks_read": len(album_artists), "tracks_updated": updated}
 
@@ -592,16 +657,6 @@ async def get_library_stats() -> LibraryStatsResponse:
         decades=[DecadeCount(**d) for d in stats.get("decades", [])],
     )
 
-
-@app.get("/api/library/stats/cached", response_model=LibraryStatsResponse)
-async def get_library_stats_cached() -> LibraryStatsResponse:
-    """Get genre/decade stats from the local cache (no Plex round-trip)."""
-    stats = await asyncio.to_thread(library_cache.get_cached_genre_decade_stats)
-    return LibraryStatsResponse(
-        total_tracks=0,  # Not needed for filter chips
-        genres=[GenreCount(**g) for g in stats["genres"]],
-        decades=[DecadeCount(**d) for d in stats["decades"]],
-    )
 
 
 @app.get("/api/library/search", response_model=list[dict])
@@ -668,7 +723,7 @@ async def get_track_feedback_endpoint() -> TrackFeedbackListResponse:
 # =============================================================================
 
 
-@app.post("/api/analyze/prompt", response_model=AnalyzePromptResponse)
+@app.post("/api/analyze/prompt", response_model=AnalyzePromptResponse, dependencies=[Depends(_rate_limit_llm)])
 async def analyze_prompt(request: AnalyzePromptRequest) -> AnalyzePromptResponse:
     """Analyze a natural language prompt to suggest filters."""
     llm_client = get_llm_client()
@@ -680,11 +735,15 @@ async def analyze_prompt(request: AnalyzePromptRequest) -> AnalyzePromptResponse
         return await asyncio.to_thread(do_analyze_prompt, request.prompt)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+    except Exception:
+        logger.exception("Prompt analysis failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Prompt analysis failed. Check server logs for details.",
+        )
 
 
-@app.post("/api/analyze/track", response_model=AnalyzeTrackResponse)
+@app.post("/api/analyze/track", response_model=AnalyzeTrackResponse, dependencies=[Depends(_rate_limit_llm)])
 async def analyze_track(request: AnalyzeTrackRequest) -> AnalyzeTrackResponse:
     """Analyze a seed track for dimensions."""
     llm_client = get_llm_client()
@@ -701,8 +760,12 @@ async def analyze_track(request: AnalyzeTrackRequest) -> AnalyzeTrackResponse:
         return await asyncio.to_thread(do_analyze_track, track)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+    except Exception:
+        logger.exception("Track analysis failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Track analysis failed. Check server logs for details.",
+        )
 
 
 @app.post("/api/filter/preview", response_model=FilterPreviewResponse)
@@ -781,7 +844,7 @@ async def preview_filters(request: FilterPreviewRequest) -> FilterPreviewRespons
 # =============================================================================
 
 
-@app.post("/api/generate/stream")
+@app.post("/api/generate/stream", dependencies=[Depends(_rate_limit_llm)])
 async def generate_playlist_sse(request: GenerateRequest) -> StreamingResponse:
     """Generate a playlist with streaming progress updates."""
     llm_client = get_llm_client()
@@ -883,8 +946,12 @@ async def save_playlist(request: SavePlaylistRequest) -> SavePlaylistResponse:
             playlist_title=request.name,
             output_dir=config.gerbera.playlist_output_dir,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write playlist: {e}")
+    except Exception:
+        logger.exception("Failed to write playlist")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to write playlist. Check server logs for details.",
+        )
 
     return SavePlaylistResponse(success=True, playlist_id=playlist_path, track_count=len(tracks))
 
@@ -964,7 +1031,7 @@ def _apply_year_override(rec, rd):
             mb_year = int(rd.release_date[:4])
             if rec.year != mb_year:
                 logger.info(
-                    "Year override: Plex=%s → MusicBrainz=%s for %s — %s",
+                    "Year override: Library=%s → MusicBrainz=%s for %s — %s",
                     rec.year, mb_year, rec.artist, rec.album,
                 )
                 rec.year = mb_year
@@ -1060,7 +1127,7 @@ async def recommend_analyze_prompt(request: AnalyzePromptFiltersRequest) -> Anal
         )
 
 
-@app.post("/api/recommend/questions", response_model=RecommendQuestionsResponse)
+@app.post("/api/recommend/questions", response_model=RecommendQuestionsResponse, dependencies=[Depends(_rate_limit_llm)])
 async def recommend_questions(request: RecommendQuestionsRequest) -> RecommendQuestionsResponse:
     """Generate clarifying questions for album recommendation."""
     pipeline = _get_pipeline()
@@ -1099,11 +1166,15 @@ async def recommend_questions(request: RecommendQuestionsRequest) -> RecommendQu
             token_count=total_tokens,
             estimated_cost=total_cost,
         )
-    except Exception as e:
+    except Exception:
         # Clean up the session if question generation failed
         if 'session_id' in locals():
             pipeline.delete_session(session_id)
-        raise HTTPException(status_code=500, detail=f"Question generation failed: {str(e)}")
+        logger.exception("Question generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Question generation failed. Check server logs for details.",
+        )
 
 
 @app.post("/api/recommend/switch-mode", response_model=RecommendSwitchModeResponse)

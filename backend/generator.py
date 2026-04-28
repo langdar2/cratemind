@@ -1,14 +1,14 @@
 """Playlist generation with library validation."""
 
+import heapq
 import json
-import json as _json
 import logging
-import random as _random
-import re as _re
-import unicodedata as _unicodedata
+import random
+import re
+import unicodedata
+from collections import deque
 from collections.abc import Generator
-from datetime import datetime
-from datetime import date as _date
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,7 +19,8 @@ from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
 from backend import library_cache
 from backend.favorites import Favorites, is_favorite, load_favorites
-from backend.als_recommender import recommender as _als_recommender
+from backend.als_recommender import recommender as als_recommender
+from backend.utils import simplify_string
 
 logger = logging.getLogger(__name__)
 
@@ -75,46 +76,18 @@ def _build_feedback_prompt(rows: list[dict], limit: int = 20) -> str | None:
 FUZZ_THRESHOLD = 72
 
 
-def simplify_string(s: str) -> str:
-    """Normalize a string for fuzzy matching: lowercase, strip accents, remove punctuation."""
-    s = _unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if _unicodedata.category(c) != "Mn")
-    return _re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
-
-
 def normalize_artist(artist: str) -> list[str]:
     """Return artist name variants for fuzzy matching (handles 'and' vs '&')."""
     variants = [artist]
     if " & " in artist:
         variants.append(artist.replace(" & ", " and "))
     if " and " in artist.lower():
-        variants.append(_re.sub(r"\band\b", "&", artist, flags=_re.IGNORECASE))
+        variants.append(re.sub(r"\band\b", "&", artist, flags=re.IGNORECASE))
     return list(dict.fromkeys(variants))  # deduplicate preserving order
-
-
-def is_live_version(track) -> bool:
-    """Return True if the track or its album title suggests a live recording."""
-    keywords = ["live", "concert", "in concert", "live at", "live from", "mtv unplugged"]
-    title = (track.title or "").lower()
-    try:
-        album_title = (track.album().title or "").lower()
-    except Exception:
-        album_title = ""
-    # Also handle date patterns like (2005-06-22) typical in live bootlegs
-    date_pattern = _re.compile(r"\d{4}[-/]\d{2}[-/]\d{2}")
-    return (
-        any(kw in title for kw in keywords)
-        or any(kw in album_title for kw in keywords)
-        or bool(date_pattern.search(title))
-        or bool(date_pattern.search(album_title))
-    )
 
 
 def _no_consecutive_artists(tracks: list[Track]) -> list[Track]:
     """Reorder tracks so no two consecutive tracks share the same artist (best-effort)."""
-    import heapq
-    from collections import deque
-
     artist_map: dict[str, deque] = {}
     for t in tracks:
         key = t.artist.lower()
@@ -281,13 +254,15 @@ def _get_tracks_from_cache(
     min_rating: int,
     max_tracks_to_ai: int,
     audio_constraints: "AudioConstraints | None" = None,
-) -> list[Track]:
+) -> tuple[list[Track], bool]:
     """Get tracks from local library cache.
 
     Returns:
-        List of Track objects
+        Tuple of (tracks, audio_dropped) where audio_dropped is True if
+        audio constraints were relaxed due to an insufficient pool.
     """
     effective_limit = max_tracks_to_ai if max_tracks_to_ai > 0 else 2000
+    audio_dropped = False
 
     if library_cache.has_cached_tracks():
         logger.info("Using cached tracks for generation")
@@ -306,6 +281,7 @@ def _get_tracks_from_cache(
                 "Audio constraints produced only %d tracks (< 50) — ignoring audio constraints",
                 len(cached_tracks),
             )
+            audio_dropped = True
             cached_tracks = library_cache.get_tracks_by_filters(
                 genres=genres,
                 decades=decades,
@@ -315,10 +291,10 @@ def _get_tracks_from_cache(
                 audio_constraints=None,
             )
 
-        return [_cached_track_to_model(t) for t in cached_tracks]
+        return [_cached_track_to_model(t) for t in cached_tracks], audio_dropped
 
     logger.warning("Library cache is empty — no tracks available")
-    return []
+    return [], False
 
 
 def write_m3u(
@@ -329,8 +305,8 @@ def write_m3u(
 ) -> str:
     """Write an Extended M3U playlist file and return its path."""
     if date_str is None:
-        date_str = _date.today().isoformat()
-    safe_title = _re.sub(r'[<>:"/\\|?*]', "_", playlist_title)
+        date_str = date.today().isoformat()
+    safe_title = re.sub(r'[<>:"/\\|?*]', "_", playlist_title)
     filename = f"{date_str}_{safe_title}.m3u"
     output_path = Path(output_dir) / filename
     lines = ["#EXTM3U"]
@@ -351,7 +327,7 @@ def build_track_prompt_entry(track: dict, favs: Favorites) -> str:
     if isinstance(genres_raw, list):
         genres = genres_raw
     else:
-        genres = _json.loads(genres_raw)
+        genres = json.loads(genres_raw)
     genre_str = ", ".join(genres) if genres else "unknown"
     fav_tag = " [FAVORITE]" if is_favorite(favs, track.get("artist", ""), track.get("album")) else ""
     return (
@@ -401,7 +377,7 @@ def generate_playlist_stream(
         pool_size = max(max_tracks_to_ai, min(max_tracks_to_ai * 3, 3000))
         logger.info("Fetching tracks: genres=%s, decades=%s, min_rating=%s, pool_size=%s",
                     genres, decades, min_rating, pool_size)
-        raw_pool = _get_tracks_from_cache(
+        raw_pool, audio_dropped = _get_tracks_from_cache(
             genres=genres,
             decades=decades,
             exclude_live=exclude_live,
@@ -409,6 +385,9 @@ def generate_playlist_stream(
             max_tracks_to_ai=pool_size,
             audio_constraints=audio_constraints,
         )
+
+        if audio_dropped:
+            yield emit("warning", {"message": "Audio constraints produced too few results and were relaxed."})
 
         if not raw_pool:
             yield emit("error", {"message": "No tracks match the selected filters. Try broadening your selection."})
@@ -418,7 +397,7 @@ def generate_playlist_stream(
         # to play_count sort when the model is not yet trained).
         diverse_pool = _diversify_tracks(raw_pool, max_per_artist=6)
         seed_id = seed_track.rating_key if seed_track else None
-        als_ranked = _als_recommender.rank(
+        als_ranked = als_recommender.rank(
             candidate_tracks=diverse_pool,
             seed_track_id=seed_id,
             n=max_tracks_to_ai,
@@ -651,6 +630,7 @@ def generate_playlist_stream(
     except Exception as e:
         logger.exception("Error during playlist generation")
         yield emit("error", {"message": str(e)})
+        yield ": heartbeat\n\n"
 
 
 GENERATION_SYSTEM = """You are a music curator creating a playlist from a user's music library.
@@ -753,7 +733,7 @@ def generate_favorites_playlist_stream(
                 t for t in other_tracks
                 if t.get("play_count", 0) == 0 and t.get("gerbera_id") not in known_new_ids
             ]
-            _random.shuffle(unplayed)
+            random.shuffle(unplayed)
             new_tracks.extend(unplayed[:max(0, 100 - len(new_tracks))])
 
         yield emit("progress", {
@@ -763,7 +743,7 @@ def generate_favorites_playlist_stream(
 
         # Rank favorites by ALS user-preference so the diversity cap favours the
         # most relevant artists rather than a random shuffle order.
-        als_fav = _als_recommender.rank(fav_tracks, seed_track_id=None, n=len(fav_tracks))
+        als_fav = als_recommender.rank(fav_tracks, seed_track_id=None, n=len(fav_tracks))
 
         # Apply artist diversity cap (max 8 per artist) on ALS-ranked favorites
         fav_counts: dict[str, int] = {}
@@ -775,7 +755,7 @@ def generate_favorites_playlist_stream(
                 fav_counts[key] = fav_counts.get(key, 0) + 1
 
         # Rank new/unheard tracks by ALS relevance too
-        als_new = _als_recommender.rank(new_tracks, seed_track_id=None, n=len(new_tracks))
+        als_new = als_recommender.rank(new_tracks, seed_track_id=None, n=len(new_tracks))
 
         # Trim to budget
         max_new = min(len(als_new), 200)
@@ -797,7 +777,7 @@ def generate_favorites_playlist_stream(
         for i, track in enumerate(combined):
             gid = track.get("gerbera_id")
             genres_raw = track.get("genres", [])
-            genres = genres_raw if isinstance(genres_raw, list) else _json.loads(genres_raw or "[]")
+            genres = genres_raw if isinstance(genres_raw, list) else json.loads(genres_raw or "[]")
             genre_str = ", ".join(genres) if genres else "unknown"
             tag = " [FAVORITE]" if gid in fav_ids else (" [NEW]" if gid in new_ids else "")
             track_lines.append(

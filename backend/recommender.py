@@ -27,15 +27,7 @@ from backend.models import (
     TasteProfile,
     album_key,
 )
-import re as _re
-import unicodedata as _unicodedata
-
-
-def simplify_string(s: str) -> str:
-    """Normalize a string for fuzzy matching: lowercase, strip accents, remove punctuation."""
-    s = _unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if _unicodedata.category(c) != "Mn")
-    return _re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+from backend.utils import simplify_string
 
 
 # Fuzzy-match thresholds for album selection (0-100 scale, rapidfuzz)
