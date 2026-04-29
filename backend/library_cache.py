@@ -150,6 +150,23 @@ def sync_tracks(conn: sqlite3.Connection, tracks: list[GerberaTrack]) -> None:
             play_count=excluded.play_count, is_live=excluded.is_live
             -- first_seen_at intentionally excluded: preserve original insertion time
     """, rows)
+
+    # Remove stale tracks no longer present in the Gerbera source
+    current_ids = {t.gerbera_id for t in tracks}
+    if current_ids:
+        cached_ids = {
+            row[0]
+            for row in conn.execute("SELECT gerbera_id FROM tracks").fetchall()
+        }
+        stale_ids = cached_ids - current_ids
+        if stale_ids:
+            placeholders = ",".join("?" for _ in stale_ids)
+            conn.execute(
+                f"DELETE FROM tracks WHERE gerbera_id IN ({placeholders})",
+                list(stale_ids),
+            )
+            logger.info("Pruned %d stale tracks from cache", len(stale_ids))
+
     conn.execute(
         "UPDATE sync_state SET track_count = ?, last_sync_at = CURRENT_TIMESTAMP WHERE id = 1",
         (len(rows),),
