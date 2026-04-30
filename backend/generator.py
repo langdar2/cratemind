@@ -132,7 +132,7 @@ def _diversify_tracks(tracks: list[Track], max_per_artist: int = 6) -> list[Trac
 def _apply_played_unplayed_split(tracks: list[Track], target: int) -> list[Track]:
     """Select *target* tracks with a 70/30 played-vs-unplayed balance.
 
-    Preserves the relative ordering of *tracks* (e.g. ALS rank) within each
+    Preserves the relative ordering of *tracks* (e.g. audio rank) within each
     bucket so the highest-relevance tracks are chosen first.
     """
     if len(tracks) <= target:
@@ -152,9 +152,9 @@ def _apply_played_unplayed_split(tracks: list[Track], target: int) -> list[Track
         elif len(unplayed) > n_unplayed:
             n_unplayed = min(n_unplayed + shortage, len(unplayed))
 
-    # Take top-N from each bucket (preserving ALS order within each)
+    # Take top-N from each bucket (preserving audio rank order within each)
     selected_keys = {t.rating_key for t in played[:n_played]} | {t.rating_key for t in unplayed[:n_unplayed]}
-    # Restore original relative order (ALS rank)
+    # Restore original relative order (audio rank)
     return [t for t in tracks if t.rating_key in selected_keys]
 
 
@@ -743,25 +743,25 @@ def generate_favorites_playlist_stream(
 
         # Rank favorites by audio similarity so the diversity cap favours the
         # most relevant artists rather than a random shuffle order.
-        als_fav = audio_ranker.rank(fav_tracks, seed_track_id=None, n=len(fav_tracks))
+        audio_fav = audio_ranker.rank(fav_tracks, seed_track_id=None, n=len(fav_tracks))
 
-        # Apply artist diversity cap (max 8 per artist) on ALS-ranked favorites
+        # Apply artist diversity cap (max 8 per artist) on audio-ranked favorites
         fav_counts: dict[str, int] = {}
         fav_pool: list[dict] = []
-        for t in als_fav:
+        for t in audio_fav:
             key = (t.get("artist") or "").lower()
             if fav_counts.get(key, 0) < 8:
                 fav_pool.append(t)
                 fav_counts[key] = fav_counts.get(key, 0) + 1
 
         # Rank new/unheard tracks by audio similarity too
-        als_new = audio_ranker.rank(new_tracks, seed_track_id=None, n=len(new_tracks))
+        audio_new = audio_ranker.rank(new_tracks, seed_track_id=None, n=len(new_tracks))
 
         # Trim to budget
-        max_new = min(len(als_new), 200)
+        max_new = min(len(audio_new), 200)
         max_fav = min(len(fav_pool), max_tracks_to_ai - max_new, 350)
         fav_pool = fav_pool[:max_fav]
-        new_pool = als_new[:max_new]
+        new_pool = audio_new[:max_new]
 
         logger.info(
             "Favorites pool: %d fav (audio-ranked) + %d new (audio-ranked) = %d total",
