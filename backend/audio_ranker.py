@@ -69,7 +69,10 @@ def _track_id(track: Any) -> str:
     if hasattr(track, "rating_key"):
         return str(track.rating_key)
     if isinstance(track, dict):
-        return str(track.get("gerbera_id") or track.get("id") or "")
+        val = track.get("gerbera_id")
+        if val is None:
+            val = track.get("id")
+        return str(val) if val is not None else ""
     return ""
 
 
@@ -79,10 +82,11 @@ def _constraints_to_vector(constraints: AudioConstraints) -> np.ndarray:
     For each constrained field, the midpoint of the allowed range is used.
     Unconstrained fields default to the center (0.5 after normalization).
     """
-    bpm_lo = constraints.bpm_min or 0.0
-    bpm_hi = constraints.bpm_max or 250.0
+    bpm_lo = constraints.bpm_min if constraints.bpm_min is not None else 0.0
+    bpm_hi = constraints.bpm_max if constraints.bpm_max is not None else 250.0
     bpm_mid = (bpm_lo + bpm_hi) / 2.0
 
+    # AudioConstraints has no energy_min — lower bound is always 0
     energy_hi = constraints.energy_max if constraints.energy_max is not None else 1.0
     energy_mid = energy_hi / 2.0
 
