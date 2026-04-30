@@ -82,7 +82,6 @@ from backend import library_cache
 from backend.gerbera_client import read_tracks, read_album_artists
 from backend.library_cache import init_db, sync_tracks, DB_PATH as CACHE_DB_PATH
 from backend.generator import write_m3u
-from backend.als_recommender import recommender as _als_recommender
 from backend.llm_client import (
     TOKENS_PER_ALBUM,
     estimate_cost_for_model,
@@ -139,10 +138,6 @@ async def _rate_limit_llm(request: Request):
             status_code=429,
             detail="Rate limit exceeded. Try again shortly.",
         )
-
-
-# Lock to prevent concurrent ALS model training
-_als_training_lock = threading.Lock()
 
 
 @asynccontextmanager
@@ -587,21 +582,6 @@ async def trigger_library_sync():
             status_code=500,
             detail="Library sync failed. Check server logs for details.",
         )
-
-    # Retrain ALS model in background — non-blocking, safe to fail
-    def _train_als() -> None:
-        if not _als_training_lock.acquire(blocking=False):
-            logger.info("ALS training already in progress — skipping")
-            return
-        try:
-            all_tracks = library_cache.get_tracks_by_filters(limit=0)
-            _als_recommender.train(all_tracks)
-        except Exception as exc:
-            logger.warning("ALS training after sync failed: %s", exc)
-        finally:
-            _als_training_lock.release()
-
-    threading.Thread(target=_train_als, daemon=True).start()
 
     # Start audio feature extraction in background after sync
     from backend.audio_features import extract_audio_features_background
