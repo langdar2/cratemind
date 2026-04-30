@@ -19,7 +19,7 @@ from backend.llm_client import get_llm_client
 from backend.models import GenerateResponse, Track
 from backend import library_cache
 from backend.favorites import Favorites, is_favorite, load_favorites
-from backend.als_recommender import recommender as als_recommender
+from backend.audio_ranker import ranker as audio_ranker
 from backend.utils import simplify_string
 
 logger = logging.getLogger(__name__)
@@ -393,20 +393,20 @@ def generate_playlist_stream(
             yield emit("error", {"message": "No tracks match the selected filters. Try broadening your selection."})
             return
 
-        # Apply artist diversity cap, then rank by ALS relevance (falls back
-        # to play_count sort when the model is not yet trained).
+        # Apply artist diversity cap, then rank by audio feature similarity.
         diverse_pool = _diversify_tracks(raw_pool, max_per_artist=6)
         seed_id = seed_track.rating_key if seed_track else None
-        als_ranked = als_recommender.rank(
+        audio_ranked = audio_ranker.rank(
             candidate_tracks=diverse_pool,
             seed_track_id=seed_id,
+            audio_constraints=audio_constraints,
             n=max_tracks_to_ai,
         )
-        filtered_tracks = _apply_played_unplayed_split(als_ranked, target=max_tracks_to_ai)
+        filtered_tracks = _apply_played_unplayed_split(audio_ranked, target=max_tracks_to_ai)
 
         logger.info(
-            "Pool: %d raw → %d after diversity → %d after ALS rank → %d after 70/30 split",
-            len(raw_pool), len(diverse_pool), len(als_ranked), len(filtered_tracks),
+            "Pool: %d raw → %d after diversity → %d after audio rank → %d after 70/30 split",
+            len(raw_pool), len(diverse_pool), len(audio_ranked), len(filtered_tracks),
         )
 
         # Step 2: Report track count
@@ -741,9 +741,9 @@ def generate_favorites_playlist_stream(
             "message": f"{len(fav_tracks)} Favoriten-Tracks, {len(new_tracks)} neue Tracks gefunden.",
         })
 
-        # Rank favorites by ALS user-preference so the diversity cap favours the
+        # Rank favorites by audio similarity so the diversity cap favours the
         # most relevant artists rather than a random shuffle order.
-        als_fav = als_recommender.rank(fav_tracks, seed_track_id=None, n=len(fav_tracks))
+        als_fav = audio_ranker.rank(fav_tracks, seed_track_id=None, n=len(fav_tracks))
 
         # Apply artist diversity cap (max 8 per artist) on ALS-ranked favorites
         fav_counts: dict[str, int] = {}
@@ -754,8 +754,8 @@ def generate_favorites_playlist_stream(
                 fav_pool.append(t)
                 fav_counts[key] = fav_counts.get(key, 0) + 1
 
-        # Rank new/unheard tracks by ALS relevance too
-        als_new = als_recommender.rank(new_tracks, seed_track_id=None, n=len(new_tracks))
+        # Rank new/unheard tracks by audio similarity too
+        als_new = audio_ranker.rank(new_tracks, seed_track_id=None, n=len(new_tracks))
 
         # Trim to budget
         max_new = min(len(als_new), 200)
@@ -764,7 +764,7 @@ def generate_favorites_playlist_stream(
         new_pool = als_new[:max_new]
 
         logger.info(
-            "Favorites pool: %d fav (ALS-ranked) + %d new (ALS-ranked) = %d total",
+            "Favorites pool: %d fav (audio-ranked) + %d new (audio-ranked) = %d total",
             len(fav_pool), len(new_pool), len(fav_pool) + len(new_pool),
         )
 
