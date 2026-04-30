@@ -13,7 +13,5 @@ unidecode
 httpx
 json-repair
 readability-lxml
-implicit
-scipy
 librosa
 tidalapi
